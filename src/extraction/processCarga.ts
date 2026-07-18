@@ -1,0 +1,208 @@
+import fs from "node:fs";
+import { Prisma } from "@prisma/client";
+import { prisma } from "../db.js";
+import { extractExcelWithFallback, combineTables } from "./excel.js";
+import { extractWithVision } from "./vision.js";
+import { getExistingMapping, suggestMapping, applyMapping, normalizeCanonicalRow } from "./mapping.js";
+import type { CanonicalField, CanonicalRow, ColumnMapping, ExtractedRow } from "./types.js";
+
+const MIME_BY_TIPO: Record<string, "application/pdf" | "image/png" | "image/jpeg"> = {
+  pdf: "application/pdf",
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+};
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < items.length; i += size) chunks.push(items.slice(i, i + size));
+  return chunks;
+}
+
+// Guarda el mapeo aprobado (o corregido a mano) para reusarlo en próximas
+// cargas del mismo proveedor sin volver a pedir revisión de columnas.
+async function upsertMapeoColumnas(proveedorId: number, mapping: ColumnMapping): Promise<void> {
+  for (const [columnaOrigen, campoDestino] of Object.entries(mapping)) {
+    await prisma.mapeoColumna.upsert({
+      where: {
+        proveedorId_columnaOrigen: { proveedorId, columnaOrigen },
+      },
+      update: { campoDestino },
+      create: { proveedorId, columnaOrigen, campoDestino },
+    });
+  }
+}
+
+// Inserta las filas ya en forma canónica y marca la carga como completada,
+// limpiando lo que quedaba pendiente de revisión.
+async function publicarCanonicalRows(
+  cargaId: number,
+  proveedorId: number,
+  canonicalRows: CanonicalRow[]
+): Promise<number> {
+  for (const batch of chunk(canonicalRows, 60)) {
+    await prisma.productoPrecio.createMany({
+      data: batch.map((r) => ({
+        proveedorId,
+        cargaId,
+        marca: r.marca,
+        skuProveedor: r.sku_proveedor,
+        skuInterno: r.sku_interno,
+        descripcion: r.descripcion,
+        seccion: r.seccion,
+        precioNeto: r.precio_neto,
+        precioConIva: r.precio_con_iva,
+        alicuotaIva: r.alicuota_iva,
+        moneda: r.moneda ?? "ARS",
+        unidad: r.unidad,
+        fechaVigencia: r.fecha_vigencia,
+        rawData: r.raw_data as unknown as Prisma.InputJsonValue,
+      })),
+    });
+  }
+
+  await prisma.carga.update({
+    where: { id: cargaId },
+    data: {
+      estado: "completado",
+      mensajeError: null,
+      filasExtraidas: Prisma.JsonNull,
+      mapeoSugerido: Prisma.JsonNull,
+    },
+  });
+
+  return canonicalRows.length;
+}
+
+// Orquesta las etapas 2-4 del pipeline (ver contexto.md) para una carga ya
+// recibida: extraer la tabla (determinístico para xlsx/xls, con fallback a
+// IA para hojas con headers atípicos; con IA de visión para pdf/png/jpg) y
+// resolver el mapeo de columnas (reusar el aprobado o pedir una sugerencia
+// si el proveedor es nuevo / le cambiaron los headers). Nunca publica sola:
+// toda carga queda esperando confirmación humana antes de escribirse en
+// ProductoPrecio (ver confirmarCargaYPublicar) — incluso un proveedor ya
+// conocido con mapeo aprobado, porque el objetivo es que un humano pueda
+// revisar/corregir los valores extraídos antes de que entren a la base.
+export async function procesarCarga(cargaId: number): Promise<void> {
+  const carga = await prisma.carga.findUniqueOrThrow({ where: { id: cargaId } });
+
+  await prisma.carga.update({
+    where: { id: cargaId },
+    data: { estado: "procesando", mensajeError: null },
+  });
+
+  try {
+    if (!carga.proveedorId) {
+      throw new Error(
+        "La carga no tiene proveedor asociado; no se puede resolver ni guardar el mapeo de columnas."
+      );
+    }
+
+    // Si ya habíamos extraído las filas en un intento anterior (por ejemplo,
+    // si esta misma carga falló en el paso de sugerir el mapeo por un error
+    // transitorio de la API), las reusamos en vez de volver a parsear el
+    // archivo entero.
+    const cache = carga.filasExtraidas as unknown as
+      | { headers: string[]; rows: ExtractedRow[] }
+      | null;
+
+    let headers: string[];
+    let rows: ExtractedRow[];
+
+    if (cache) {
+      ({ headers, rows } = cache);
+    } else {
+      const buffer = fs.readFileSync(carga.rutaArchivo);
+
+      if (carga.tipoArchivo === "xlsx" || carga.tipoArchivo === "xls") {
+        const tables = await extractExcelWithFallback(buffer);
+        if (tables.length === 0) {
+          throw new Error("No se detectó ninguna tabla de productos en el archivo.");
+        }
+        ({ headers, rows } = combineTables(tables));
+      } else {
+        const mimeType = MIME_BY_TIPO[carga.tipoArchivo];
+        if (!mimeType) {
+          throw new Error(`Tipo de archivo no soportado para extracción: ${carga.tipoArchivo}`);
+        }
+        const tables = await extractWithVision(buffer, mimeType, carga.nombreArchivo);
+        ({ headers, rows } = combineTables(tables));
+      }
+
+      if (rows.length === 0) {
+        throw new Error("No se encontraron filas de producto en el archivo.");
+      }
+
+      await prisma.carga.update({
+        where: { id: cargaId },
+        data: { filasExtraidas: { headers, rows } as unknown as Prisma.InputJsonValue },
+      });
+    }
+
+    const mapeoExistente = await getExistingMapping(carga.proveedorId, headers);
+    const mapeoParaRevision = mapeoExistente ?? (await suggestMapping(headers, rows));
+
+    await prisma.carga.update({
+      where: { id: cargaId },
+      data: {
+        // "confirmacion_pendiente": proveedor conocido, el mapeo ya está
+        // aprobado, solo falta que un humano confirme los valores.
+        // "revision_pendiente": proveedor nuevo (o le cambiaron los
+        // headers), el mapeo es una sugerencia del LLM sin aprobar todavía.
+        estado: mapeoExistente ? "confirmacion_pendiente" : "revision_pendiente",
+        mapeoSugerido: mapeoParaRevision as unknown as Prisma.InputJsonValue,
+      },
+    });
+  } catch (err) {
+    await prisma.carga.update({
+      where: { id: cargaId },
+      data: { estado: "error", mensajeError: err instanceof Error ? err.message : String(err) },
+    });
+    throw err;
+  }
+}
+
+// Un humano aprobó (o editó) el mapeo sugerido: lo guarda en MapeoColumna
+// para reusarlo en próximas cargas del mismo proveedor, y publica las filas
+// que ya estaban extraídas (no hace falta re-parsear el archivo) aplicando
+// ese mapeo. Se mantiene por compatibilidad con pruebas existentes; el
+// frontend nuevo usa confirmarCargaYPublicar, que además permite editar los
+// valores de cada fila, no solo el mapeo.
+export async function aprobarMapeoYPublicar(
+  cargaId: number,
+  mapping: ColumnMapping
+): Promise<number> {
+  const carga = await prisma.carga.findUniqueOrThrow({ where: { id: cargaId } });
+  if (!carga.proveedorId) throw new Error("La carga no tiene proveedor asociado.");
+  if (!carga.filasExtraidas) {
+    throw new Error("La carga no tiene filas extraídas pendientes de mapeo.");
+  }
+
+  const { headers, rows } = carga.filasExtraidas as unknown as {
+    headers: string[];
+    rows: ExtractedRow[];
+  };
+
+  await upsertMapeoColumnas(carga.proveedorId, mapping);
+  const canonicalRows = applyMapping(headers, rows, mapping);
+  return publicarCanonicalRows(cargaId, carga.proveedorId, canonicalRows);
+}
+
+// Un humano confirmó la carga desde la pantalla de revisión: publica
+// exactamente las filas finales que mandó (ya editadas a mano si hizo
+// falta), sin volver a derivarlas de `filasExtraidas` — es la pieza que
+// permite corregir un valor puntual (ej. un SKU mal leído por la IA) antes
+// de que entre a la base, no solo reasignar el mapeo de columnas.
+export async function confirmarCargaYPublicar(
+  cargaId: number,
+  mapping: ColumnMapping,
+  filasFinales: Array<Partial<Record<CanonicalField, unknown>> & { raw_data?: unknown }>
+): Promise<number> {
+  const carga = await prisma.carga.findUniqueOrThrow({ where: { id: cargaId } });
+  if (!carga.proveedorId) throw new Error("La carga no tiene proveedor asociado.");
+  if (filasFinales.length === 0) throw new Error("No hay filas para publicar.");
+
+  await upsertMapeoColumnas(carga.proveedorId, mapping);
+  const canonicalRows = filasFinales.map(normalizeCanonicalRow);
+  return publicarCanonicalRows(cargaId, carga.proveedorId, canonicalRows);
+}

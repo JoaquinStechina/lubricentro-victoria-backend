@@ -1,0 +1,131 @@
+// Stack: SQLite ahora (prototipo, sin infraestructura extra), MySQL a futuro
+// en producción. Para migrar: cambiar `provider` a "mysql", ajustar
+// DATABASE_URL y correr `prisma migrate dev` de nuevo — el schema en sí
+// no necesita cambios (los tipos usados son compatibles con ambos).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Proveedor {
+  id        Int      @id @default(autoincrement())
+  nombre    String   @unique
+  createdAt DateTime @default(now())
+
+  productos ProductoPrecio[]
+  ofertas   Oferta[]
+  mapeos    MapeoColumna[]
+  cargas    Carga[]
+
+  @@map("proveedores")
+}
+
+// Schema canónico productos_precios (ver contexto.md). No se hace UPDATE
+// destructivo de precios: cada carga nueva inserta filas con su propia
+// fechaVigencia para poder auditar variaciones en el tiempo.
+model ProductoPrecio {
+  id            Int      @id @default(autoincrement())
+  proveedorId   Int
+  proveedor     Proveedor @relation(fields: [proveedorId], references: [id])
+  marca         String?
+  skuProveedor  String?
+  skuInterno    String?
+  descripcion   String?
+  seccion       String?
+  precioNeto    Float?
+  precioConIva  Float?
+  alicuotaIva   Float?
+  moneda        String   @default("ARS")
+  unidad        String?
+  fechaVigencia String?
+  rawData       Json?
+  cargaId       Int?
+  carga         Carga?   @relation(fields: [cargaId], references: [id])
+  createdAt     DateTime @default(now())
+
+  @@index([proveedorId])
+  @@index([skuInterno])
+  @@index([skuProveedor])
+  @@map("productos_precios")
+}
+
+model Oferta {
+  id             Int      @id @default(autoincrement())
+  proveedorId    Int
+  proveedor      Proveedor @relation(fields: [proveedorId], references: [id])
+  marca          String
+  numeroOferta   Int
+  skuProveedor   String
+  descripcion    String
+  desdeCantidad  Int
+  descuentoPct   Float
+  precioUnitario Float
+  moneda         String   @default("ARS")
+  fechaOferta    String
+  horaOferta     String
+  archivoOrigen  String
+  rawData        Json?
+  cargaId        Int?
+  carga          Carga?   @relation(fields: [cargaId], references: [id])
+  createdAt      DateTime @default(now())
+
+  @@index([proveedorId])
+  @@map("ofertas")
+}
+
+// Mapeo columna origen -> campo del schema canónico, por proveedor.
+// Se guarda una vez que un humano aprueba el mapeo sugerido (ver
+// contexto.md, etapas 3-4 del pipeline) y se reusa en cargas siguientes
+// del mismo proveedor sin volver a pedir aprobación.
+model MapeoColumna {
+  id            Int      @id @default(autoincrement())
+  proveedorId   Int
+  proveedor     Proveedor @relation(fields: [proveedorId], references: [id])
+  columnaOrigen String
+  campoDestino  String
+  createdAt     DateTime @default(now())
+
+  @@unique([proveedorId, columnaOrigen])
+  @@map("mapeos_columna")
+}
+
+// Una fila por archivo subido por el cliente. Es la etapa de "recepción"
+// del pipeline (etapa 1): el archivo llega y queda en estado `pendiente`
+// hasta que se dispara el procesamiento (extracción + mapeo de columnas)
+// y publica productos/ofertas asociados a esta carga.
+model Carga {
+  id             Int       @id @default(autoincrement())
+  proveedorId    Int?
+  proveedor      Proveedor? @relation(fields: [proveedorId], references: [id])
+  nombreArchivo  String
+  rutaArchivo    String
+  tipoArchivo    String // xlsx | xls | pdf | png | jpg | jpeg
+  // pendiente | procesando | revision_pendiente | confirmacion_pendiente |
+  // completado | error. revision_pendiente = mapeo sugerido por IA sin
+  // aprobar (proveedor nuevo o headers distintos); confirmacion_pendiente =
+  // mapeo ya aprobado de antes, solo falta que un humano confirme los
+  // valores. Ninguna carga se publica sola: procesarCarga() nunca llega a
+  // "completado" por sí misma, hace falta POST /:id/confirmar.
+  estado         String    @default("pendiente")
+  mensajeError   String?
+  // Filas crudas ya extraídas (headers originales -> valor), antes de
+  // aplicar el mapeo de columnas. Se guardan para poder aplicar el mapeo
+  // sin tener que re-extraer el archivo tras la revisión humana.
+  filasExtraidas Json?
+  // Mapeo columna origen -> campo canónico sugerido por el LLM cuando el
+  // proveedor es nuevo o le cambiaron los headers (etapa 3-4 del pipeline).
+  // Queda pendiente de aprobación humana antes de escribirse en
+  // MapeoColumna y aplicarse.
+  mapeoSugerido  Json?
+  productos      ProductoPrecio[]
+  ofertas        Oferta[]
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@map("cargas")
+}
