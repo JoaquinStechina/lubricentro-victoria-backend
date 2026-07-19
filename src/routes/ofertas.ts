@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { prisma } from "../db.js";
+import { requireRole } from "../middleware/auth.js";
 
 export const ofertasRouter = Router();
 
@@ -45,7 +46,7 @@ function parseCerrarBody(body: unknown): { proveedorId: number; numeroOferta: nu
 // Cierran (o reabren) TODOS los tramos (desde_cantidad distintos) de un
 // mismo sku_proveedor dentro de una misma oferta — "se acabó el stock" es
 // un hecho del producto, no de un tramo puntual de cantidad/descuento.
-ofertasRouter.post("/cerrar", async (req, res) => {
+ofertasRouter.post("/cerrar", requireRole("ADMINISTRADOR"), async (req, res) => {
   const parsed = parseCerrarBody(req.body);
   if (!parsed) {
     res.status(400).json({ error: "Body inválido: se esperaba {proveedorId, numeroOferta, skuProveedor}." });
@@ -62,7 +63,7 @@ ofertasRouter.post("/cerrar", async (req, res) => {
   res.json({ actualizadas: count });
 });
 
-ofertasRouter.post("/reactivar", async (req, res) => {
+ofertasRouter.post("/reactivar", requireRole("ADMINISTRADOR"), async (req, res) => {
   const parsed = parseCerrarBody(req.body);
   if (!parsed) {
     res.status(400).json({ error: "Body inválido: se esperaba {proveedorId, numeroOferta, skuProveedor}." });

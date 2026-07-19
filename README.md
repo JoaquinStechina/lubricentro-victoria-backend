@@ -46,10 +46,11 @@ abstrae el motor.
 ## Setup
 
 ```bash
-cp .env.example .env   # completar OPENROUTER_API_KEY para pdf/png y proveedores nuevos
+cp .env.example .env   # completar OPENROUTER_API_KEY, JWT_SECRET y SYSADMIN_* (ver Autenticación y roles)
 npm install
 npm run prisma:migrate   # crea dev.db y las tablas
 npm run seed              # importa productos_todos.json / ofertas.json existentes
+npm run seed:sysadmin     # crea la primera cuenta SYSADMIN (lee SYSADMIN_EMAIL/PASSWORD/NOMBRE)
 npm run dev                # http://localhost:4000
 ```
 
@@ -64,6 +65,12 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
 
 ## Modelo de datos
 
+- `Usuario` — cuentas internas del sistema (`email` único, `passwordHash` con
+  bcrypt, `rol`: `SYSADMIN` | `ADMINISTRADOR` | `EMPLEADO`, `activo`). No
+  tiene relación con `Proveedor`/`ProductoPrecio`/etc — es el modelo de auth,
+  aparte del pipeline de datos. `creadoPorId` referencia al `Usuario` que dio
+  de alta la cuenta (autoreferencia, nullable — el primer `SYSADMIN` lo crea
+  `scripts/seed-sysadmin.ts`, no tiene creador). Ver "Autenticación y roles".
 - `Proveedor` — un proveedor puede vender varias marcas.
 - `ProductoPrecio` / `Oferta` — el schema canónico de `contexto.md`. Nunca se
   hace `UPDATE` destructivo de precios: cada carga nueva inserta filas con su
@@ -105,9 +112,52 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
   nunca llega a `completado` por sí misma, siempre hace falta la
   confirmación humana de `POST /:id/confirmar` (ver Endpoints).
 
+## Autenticación y roles
+
+Toda la API (salvo `/api/health` y `/api/auth/login`) requiere sesión. La
+sesión es un JWT firmado (`JWT_SECRET`, mismo valor que en
+`lubricentro-victoria-front/.env.local`) guardado en una cookie httpOnly
+(`session`) que emite `POST /api/auth/login`. El frontend la manda
+automáticamente porque `apiFetch` usa `credentials: "include"` — no hay
+tokens en `localStorage` ni headers manuales.
+
+`src/middleware/auth.ts` expone dos middlewares:
+
+- `requireAuth` — verifica la cookie y adjunta `req.user` (`{sub, email,
+  nombre, rol}`). Montado globalmente en `server.ts` sobre todos los routers
+  salvo `authRouter`.
+- `requireRole(minRol)` — exige un rol mínimo con jerarquía acumulativa
+  `EMPLEADO < ADMINISTRADOR < SYSADMIN` (un `SYSADMIN` pasa cualquier chequeo
+  de rol). Se monta por router o por ruta puntual.
+
+Matriz de permisos actual:
+
+| Recurso | Rol mínimo |
+|---|---|
+| `GET /api/productos`, `GET /api/ofertas` | `EMPLEADO` (cualquier cuenta activa) |
+| `POST /api/ofertas/cerrar`, `POST /api/ofertas/reactivar` | `ADMINISTRADOR` |
+| `/api/uploads/*`, `/api/stats`, `/api/proveedores` (todo) | `ADMINISTRADOR` |
+| `/api/usuarios/*` (todo) | `SYSADMIN` |
+
+El primer `SYSADMIN` no se crea desde la API — no hay forma de que exista
+un usuario que autorice esa primera creación. Se crea con
+`npm run seed:sysadmin` (lee `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`/
+`SYSADMIN_NOMBRE` del entorno). Desde ahí, un `SYSADMIN` da de alta cuentas
+`ADMINISTRADOR`/`EMPLEADO` vía `POST /api/usuarios` (no se puede crear otro
+`SYSADMIN` por ese endpoint).
+
 ## Endpoints
 
 - `GET /api/health`
+- `POST /api/auth/login` — body `{email, password}`. Devuelve el usuario y
+  setea la cookie `session` (httpOnly, 7 días).
+- `POST /api/auth/logout` — limpia la cookie.
+- `GET /api/auth/me` — usuario de la sesión actual (requiere estar logueado).
+- `GET /api/usuarios` / `POST /api/usuarios` / `PATCH /api/usuarios/:id` —
+  listar, crear (`{email, nombre, password, rol}`, `rol` restringido a
+  `ADMINISTRADOR`/`EMPLEADO`) y editar (activar/desactivar, cambiar rol o
+  nombre, resetear password) cuentas. Todo `SYSADMIN`-only, ver
+  "Autenticación y roles".
 - `POST /api/uploads` — multipart, campo `file` (xlsx/xls/pdf/png/jpg),
   opcionalmente `proveedor` (nombre) y `tipoDatos` (`"catalogo"` default |
   `"oferta"`). Guarda el archivo en `uploads/` y crea una `Carga` en estado

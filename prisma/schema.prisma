@@ -12,6 +12,31 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+enum Rol {
+  SYSADMIN
+  ADMINISTRADOR
+  EMPLEADO
+}
+
+// Cuentas internas del sistema. El primer SYSADMIN se crea con
+// scripts/seed-sysadmin.ts (no hay forma de crear el primero desde la UI,
+// ya que solo un SYSADMIN puede crear cuentas). creadoPorId registra quién
+// dio de alta cada cuenta (para auditoría, ver POST /api/usuarios).
+model Usuario {
+  id           Int       @id @default(autoincrement())
+  email        String    @unique
+  passwordHash String
+  nombre       String
+  rol          Rol
+  activo       Boolean   @default(true)
+  creadoPorId  Int?
+  creadoPor    Usuario?  @relation("UsuarioCreador", fields: [creadoPorId], references: [id])
+  creados      Usuario[] @relation("UsuarioCreador")
+  createdAt    DateTime  @default(now())
+
+  @@map("usuarios")
+}
+
 model Proveedor {
   id        Int      @id @default(autoincrement())
   nombre    String   @unique
