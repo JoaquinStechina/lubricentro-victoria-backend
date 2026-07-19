@@ -72,6 +72,21 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
   `Oferta` exige `marca`/`numeroOferta`/`skuProveedor`/`descripcion`/
   `desdeCantidad`/`descuentoPct`/`precioUnitario`/`fechaOferta`/`horaOferta`
   no nulos — se valida antes de publicar (ver `processCarga.ts`).
+  - `ProductoPrecio.vigente` (`Boolean`, default `true`): marca cuál es la
+    fila más reciente por proveedor+marca+SKU. Al confirmar una carga nueva,
+    la fila anterior de ese mismo proveedor+marca+SKU se marca `false` (ver
+    `publicarCanonicalRows` en `processCarga.ts`) — nunca se borra ni se
+    pisa. Filas sin `skuProveedor` no tienen forma confiable de matchear "el
+    mismo producto" y quedan siempre en `true`. Consumido por
+    `GET /api/productos` (ver Endpoints).
+  - `Oferta.fechaHasta` (`String?`, formato `YYYY-MM-DD`) y `Oferta.activa`
+    (`Boolean`, default `true`): la mayoría de las ofertas son "hasta agotar
+    stock" (sin fecha de fin conocida) y se cierran a mano
+    (`POST /api/ofertas/cerrar`); algunas tienen fecha fija, en cuyo caso
+    `fechaHasta` alcanza para que dejen de listarse solas sin necesitar un
+    cron/worker (comparación de texto en formato ISO, no hay parseo de
+    fechas real en este schema). `activa` nunca lo toca el pipeline de
+    extracción/mapeo, solo el endpoint de cierre/reactivación.
 - `MapeoColumna` — mapeo columna origen → campo canónico, por proveedor y
   por `tipoDatos` (`"catalogo"` | `"oferta"`, ver `Carga` abajo): un mismo
   proveedor puede tener una columna "SKU" mapeada distinto en su catálogo y
@@ -136,6 +151,24 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
   para el autocomplete del formulario de carga (evita crear un proveedor
   duplicado por un typo en el nombre).
 - `GET /api/stats` — conteo de proveedores/productos/ofertas/cargas.
+- `GET /api/productos` — catálogo "vigente" (`vigente: true`), opcionalmente
+  filtrado por `?proveedorId=`, paginado (`?page=&pageSize=`, default 100).
+  Aplica `distinct` + `orderBy: createdAt desc` como red de seguridad para
+  los datos cargados antes de que existiera el campo `vigente` (quedaron
+  todos en `true`, no se puede reescribir retroactivamente cuál era "la
+  última" — se autocorrige con la próxima carga de ese proveedor+SKU). El
+  `total` de la respuesta no aplica ese mismo `distinct` (Prisma no lo
+  soporta en `count`), así que puede sobrestimar temporalmente en esos
+  casos. La consume `/cargas/gestion` en el frontend.
+- `GET /api/ofertas` — ofertas activas: `activa: true` y (`fechaHasta` nula
+  o `>= hoy`, comparación de texto ISO). `?proveedorId=` opcional,
+  `?incluirCerradas=true` para ver también las cerradas/vencidas.
+- `POST /api/ofertas/cerrar` / `POST /api/ofertas/reactivar` — body
+  `{"proveedorId": <number>, "numeroOferta": <number>, "skuProveedor":
+  <string>}`. Cambia `activa` para **todas** las filas que compartan esa
+  combinación (todos los tramos de `desde_cantidad` de ese SKU dentro de esa
+  oferta) — "se acabó el stock" es un hecho del producto, no de un tramo de
+  cantidad puntual.
 
 ## Extracción (`src/extraction/`)
 
@@ -228,7 +261,11 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
   fecha_oferta/hora_oferta con esa metadata solo en las filas donde el
   campo no vino de una columna mapeada — así funciona tanto un proveedor
   donde ese dato es una columna real (pasa con `numero_oferta` en BOR&UR)
-  como uno donde solo está en el banner.
+  como uno donde solo está en el banner. `fecha_hasta` (vencimiento de la
+  oferta) sigue el mismo mecanismo: dato de archivo/banner con fallback a
+  metadata, `null` si el archivo dice algo como "hasta agotar stock" o no
+  da fecha concreta (eso no significa "no vence", significa que se cierra
+  a mano después, ver `Oferta.activa` en "Modelo de datos").
 - `processCarga.ts` — orquesta todo lo anterior, bifurcando por
   `carga.tipoDatos` entre el flujo de catálogo y el de ofertas. Si el paso
   de mapeo falla (ej. sin API key), las filas ya extraídas (y, para
@@ -237,7 +274,12 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
   campos `NOT NULL` en el schema (a diferencia de `ProductoPrecio`); antes
   de publicar se valida que estén completos con un mensaje de error legible
   (fila + campos faltantes) en vez de dejar que el `INSERT` de Prisma
-  rompa con un error críptico.
+  rompa con un error críptico. `publicarCanonicalRows` marca `vigente:
+  false` en la fila anterior de cada proveedor+marca+SKU presente en la
+  carga antes de insertar las nuevas (agrupado por marca y en lotes de 500
+  SKUs por `updateMany`, no una query por fila) — todo en una transacción
+  (`$transaction`, timeout de 30s para archivos grandes) para que no quede
+  un estado intermedio visible.
 
 ## Pendiente
 
@@ -250,3 +292,7 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
   automáticamente (habría que hacer un refetch manual o mover el chequeo al
   cliente). Siguen siendo, de todas formas, solo advertencias: la única
   validación que bloquea la publicación sigue siendo la revisión humana.
+- `GET /api/productos` no puede aplicar `distinct` al `count` (Prisma no lo
+  soporta ahí), así que el `total` puede sobrestimar para proveedores con
+  historial cargado antes de que existiera el campo `vigente` — se
+  autocorrige con la próxima carga de ese proveedor+SKU, no antes.

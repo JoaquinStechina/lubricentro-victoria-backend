@@ -96,13 +96,14 @@ export async function extractWithVision(
 const OFERTA_EXTRACTION_PROMPT = `Sos un asistente que extrae tablas de OFERTAS (descuentos por SKU con tramos de cantidad) de proveedores de repuestos automotores, a partir de un documento (PDF o imagen) que puede estar prolijo o desprolijo.
 
 Devolvé ÚNICAMENTE un objeto JSON (sin texto antes ni después, sin markdown) con esta forma exacta:
-{"headers": ["<nombre de columna tal cual aparece en el documento>", ...], "rows": [{"<header>": "<valor tal cual aparece>", ...}, ...], "metadata": {"marca": <string o null>, "numero_oferta": <string o null>, "fecha_oferta": <string YYYY-MM-DD o null>, "hora_oferta": <string HH:MM o null>}}
+{"headers": ["<nombre de columna tal cual aparece en el documento>", ...], "rows": [{"<header>": "<valor tal cual aparece>", ...}, ...], "metadata": {"marca": <string o null>, "numero_oferta": <string o null>, "fecha_oferta": <string YYYY-MM-DD o null>, "hora_oferta": <string HH:MM o null>, "fecha_hasta": <string YYYY-MM-DD o null>}}
 
 Reglas:
 - Incluí TODAS las columnas que veas, con su nombre original (no traduzcas ni normalices nombres).
 - Incluí TODAS las filas de oferta que encuentres. Un mismo código de producto puede repetirse varias veces con distinto umbral de cantidad/descuento (tramos de descuento por volumen) — son filas válidas, NO las deduplique.
 - Los valores quedan como aparecen en el documento (no los conviertas a número vos).
 - "metadata" son datos que suelen aplicar a TODO el archivo, no ser una columna de la tabla: fijate si hay un renglón banner al principio del documento (ej. "PROVEEDOR S.R.L.  01/07/2026 - 15:00") del que se puedan sacar fecha_oferta/hora_oferta/numero_oferta, y si "marca" se puede inferir del nombre de archivo (te lo paso abajo) o de algún título del documento. Si alguno de estos datos SÍ es una columna de la tabla, dejalo también ahí como columna y podés poner null en metadata para ese campo.
+- "fecha_hasta" es el vencimiento de la oferta, SOLO si el documento da una fecha concreta (ej. "válida durante julio"). Si dice "hasta agotar stock" o no menciona vencimiento, dejalo null — no asumas que no vence, solo que no tiene fecha fija (se cierra manualmente más adelante).
 - Si el documento no tiene ninguna tabla de ofertas reconocible, devolvé {"headers": [], "rows": [], "metadata": {}}.
 
 Nombre de archivo: "{{fileName}}"`;
@@ -182,6 +183,7 @@ export async function extractOfertaWithVision(
       numero_oferta: asStringOrNull(metadataRaw.numero_oferta),
       fecha_oferta: asStringOrNull(metadataRaw.fecha_oferta),
       hora_oferta: asStringOrNull(metadataRaw.hora_oferta),
+      fecha_hasta: asStringOrNull(metadataRaw.fecha_hasta),
     },
   };
 }

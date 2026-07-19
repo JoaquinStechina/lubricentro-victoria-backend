@@ -24,14 +24,15 @@ ${
     : "No se detectó texto antes de la tabla de datos."
 }
 
-Estos 4 datos suelen aplicar a TODO el archivo, no ser una columna de la tabla. Inferí los que puedas:
+Estos 5 datos suelen aplicar a TODO el archivo, no ser una columna de la tabla. Inferí los que puedas:
 - "marca": la marca de los productos en oferta. Normalmente se puede inferir del nombre de archivo (ej. "ofertas baterías autos bosch.xls" -> "Bosch Baterías", "OFERTAS Tecfil y WhatsApp Tecfil.xls" -> "Tecfil").
 - "numero_oferta": el número de oferta del archivo, SOLO si aparece en el texto de arriba (no lo inventes; si no aparece ahí, puede que sea una columna de la tabla, en cuyo caso no hace falta acá — dejalo null).
 - "fecha_oferta": fecha en formato YYYY-MM-DD, si aparece en el texto de arriba.
 - "hora_oferta": hora en formato HH:MM, si aparece en el texto de arriba.
+- "fecha_hasta": fecha de vencimiento de la oferta, en formato YYYY-MM-DD, SOLO si el texto da una fecha concreta (ej. "válida durante julio" -> el último día de julio de ese año). Si dice algo como "hasta agotar stock", "hasta fin de stock", o no menciona ningún vencimiento, dejalo en null — null significa que la oferta no tiene fecha de cierre conocida (se cierra manualmente más adelante), no que dure para siempre.
 
 Devolvé ÚNICAMENTE un objeto JSON (sin texto antes ni después, sin markdown) con esta forma exacta, usando null en lo que no puedas inferir con confianza:
-{"marca": <string o null>, "numero_oferta": <string o null>, "fecha_oferta": <string o null>, "hora_oferta": <string o null>}`;
+{"marca": <string o null>, "numero_oferta": <string o null>, "fecha_oferta": <string o null>, "hora_oferta": <string o null>, "fecha_hasta": <string o null>}`;
 
   const completion = await client.chat.completions.create({
     model: METADATA_MODEL,
@@ -58,5 +59,6 @@ Devolvé ÚNICAMENTE un objeto JSON (sin texto antes ni después, sin markdown) 
     numero_oferta: asStringOrNull(parsed.numero_oferta),
     fecha_oferta: asStringOrNull(parsed.fecha_oferta),
     hora_oferta: asStringOrNull(parsed.hora_oferta),
+    fecha_hasta: asStringOrNull(parsed.fecha_hasta),
   };
 }

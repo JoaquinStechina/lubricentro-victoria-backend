@@ -4,6 +4,8 @@ import cors from "cors";
 import { uploadsRouter } from "./routes/uploads.js";
 import { statsRouter } from "./routes/stats.js";
 import { proveedoresRouter } from "./routes/proveedores.js";
+import { productosRouter } from "./routes/productos.js";
+import { ofertasRouter } from "./routes/ofertas.js";
 
 const app = express();
 app.use(cors());
@@ -19,6 +21,8 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/uploads", uploadsRouter);
 app.use("/api/stats", statsRouter);
 app.use("/api/proveedores", proveedoresRouter);
+app.use("/api/productos", productosRouter);
+app.use("/api/ofertas", ofertasRouter);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);

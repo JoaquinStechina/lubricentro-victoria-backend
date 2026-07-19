@@ -43,6 +43,13 @@ model ProductoPrecio {
   moneda        String   @default("ARS")
   unidad        String?
   fechaVigencia String?
+  // true = la fila mas reciente conocida para este proveedor+marca+SKU.
+  // Al confirmar una carga nueva, la fila anterior de ese mismo
+  // proveedor+marca+SKU se marca en false (ver publicarCanonicalRows en
+  // processCarga.ts) - nunca se borra ni se pisa, solo se deja de considerar
+  // vigente. Filas sin skuProveedor no tienen forma confiable de matchear
+  // "el mismo producto" y quedan siempre en true (no se tocan).
+  vigente       Boolean  @default(true)
   rawData       Json?
   cargaId       Int?
   carga         Carga?   @relation(fields: [cargaId], references: [id])
@@ -51,6 +58,7 @@ model ProductoPrecio {
   @@index([proveedorId])
   @@index([skuInterno])
   @@index([skuProveedor])
+  @@index([proveedorId, marca, skuProveedor])
   @@map("productos_precios")
 }
 
@@ -68,6 +76,15 @@ model Oferta {
   moneda         String   @default("ARS")
   fechaOferta    String
   horaOferta     String
+  // Fecha de vencimiento declarada por el proveedor (archivo/banner, mismo
+  // origen que fechaOferta/horaOferta - ver ofertaMetadata.ts), en formato
+  // YYYY-MM-DD para poder compararla como texto sin parsear fechas. null =
+  // sin fecha fija ("hasta agotar stock"): se cierra solo con la accion
+  // manual de POST /api/ofertas/cerrar, nunca con un job automatico.
+  fechaHasta     String?
+  // Nunca la toca el pipeline de extraccion/mapeo: arranca en true al
+  // publicar y solo cambia via POST /api/ofertas/cerrar o /reactivar.
+  activa         Boolean  @default(true)
   archivoOrigen  String
   rawData        Json?
   cargaId        Int?

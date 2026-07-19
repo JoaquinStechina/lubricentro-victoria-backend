@@ -73,7 +73,8 @@ ${JSON.stringify(CANONICAL_FIELDS_OFERTAS)}
 Reglas:
 - "sku_proveedor" es el código del producto tal como lo identifica el proveedor.
 - "desde_cantidad" es el umbral de unidades a partir del cual aplica ese "descuento_pct" (tramos de descuento por volumen). Un mismo sku_proveedor puede aparecer en varias filas con distinto desde_cantidad/descuento_pct — eso es válido, NO sugieras tratarlo como una columna única por SKU ni como duplicados.
-- "numero_oferta", "marca", "fecha_oferta", "hora_oferta" a veces son columnas de la tabla y a veces no aparecen en ninguna columna (vienen de un banner o del nombre de archivo, eso se resuelve aparte) — si no ves una columna clara para alguno de estos, dejalo en null.
+- "numero_oferta", "marca", "fecha_oferta", "hora_oferta", "fecha_hasta" a veces son columnas de la tabla y a veces no aparecen en ninguna columna (vienen de un banner o del nombre de archivo, eso se resuelve aparte) — si no ves una columna clara para alguno de estos, dejalo en null.
+- "fecha_hasta" es la fecha de vencimiento de la oferta (formato YYYY-MM-DD) — poco común como columna real, casi siempre es un dato de archivo, no de fila.
 - "precio_unitario" es el precio final ya con el descuento de ese tramo aplicado.
 - Si no estás seguro de una columna, dejala en null (mejor no mapear que mapear mal).
 
@@ -135,6 +136,7 @@ export function normalizeOfertaRow(
     moneda: toStringOrNull(input.moneda) ?? "ARS",
     fecha_oferta: toStringOrNull(input.fecha_oferta),
     hora_oferta: toStringOrNull(input.hora_oferta),
+    fecha_hasta: toStringOrNull(input.fecha_hasta),
     raw_data: rawData,
   };
 }
@@ -187,6 +189,13 @@ export function applyMappingOfertas(
       canonical.hora_oferta === ""
     ) {
       canonical.hora_oferta = metadata.hora_oferta;
+    }
+    if (
+      canonical.fecha_hasta === undefined ||
+      canonical.fecha_hasta === null ||
+      canonical.fecha_hasta === ""
+    ) {
+      canonical.fecha_hasta = metadata.fecha_hasta;
     }
 
     return normalizeOfertaRow({ ...canonical, raw_data: rawData });

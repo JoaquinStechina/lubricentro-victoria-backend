@@ -54,32 +54,67 @@ async function upsertMapeoColumnas(
 }
 
 // Inserta las filas ya en forma canónica y marca la carga como completada,
-// limpiando lo que quedaba pendiente de revisión.
+// limpiando lo que quedaba pendiente de revisión. Antes de insertar, marca
+// como superada (vigente: false) la fila previa de cada proveedor+marca+SKU
+// que aparezca en este batch — nunca se pisa ni se borra, solo se deja de
+// considerar la última vigente (ver el campo `vigente` en schema.prisma).
+// Filas sin sku_proveedor no tienen forma confiable de matchear "el mismo
+// producto" y no se tocan. Todo en una transacción para que no quede un
+// estado intermedio visible (superada pero la nueva todavía no insertada).
 async function publicarCanonicalRows(
   cargaId: number,
   proveedorId: number,
   canonicalRows: CanonicalRow[]
 ): Promise<number> {
-  for (const batch of chunk(canonicalRows, 60)) {
-    await prisma.productoPrecio.createMany({
-      data: batch.map((r) => ({
-        proveedorId,
-        cargaId,
-        marca: r.marca,
-        skuProveedor: r.sku_proveedor,
-        skuInterno: r.sku_interno,
-        descripcion: r.descripcion,
-        seccion: r.seccion,
-        precioNeto: r.precio_neto,
-        precioConIva: r.precio_con_iva,
-        alicuotaIva: r.alicuota_iva,
-        moneda: r.moneda ?? "ARS",
-        unidad: r.unidad,
-        fechaVigencia: r.fecha_vigencia,
-        rawData: r.raw_data as unknown as Prisma.InputJsonValue,
-      })),
-    });
-  }
+  await prisma.$transaction(
+    async (tx) => {
+      // Agrupado por marca (no una query por SKU: un archivo puede traer
+      // miles de filas, y SQLite tiene un límite de ~999 parámetros por
+      // statement) — se resuelve con un updateMany por marca, con el set de
+      // SKUs de esa marca en lotes de 500 dentro del `in`.
+      const skusPorMarca = new Map<string | null, Set<string>>();
+      for (const r of canonicalRows) {
+        if (!r.sku_proveedor) continue;
+        const set = skusPorMarca.get(r.marca) ?? new Set<string>();
+        set.add(r.sku_proveedor);
+        skusPorMarca.set(r.marca, set);
+      }
+      for (const [marca, skus] of skusPorMarca) {
+        for (const loteSkus of chunk(Array.from(skus), 500)) {
+          await tx.productoPrecio.updateMany({
+            where: { proveedorId, marca, skuProveedor: { in: loteSkus }, vigente: true },
+            data: { vigente: false },
+          });
+        }
+      }
+
+      for (const batch of chunk(canonicalRows, 60)) {
+        await tx.productoPrecio.createMany({
+          data: batch.map((r) => ({
+            proveedorId,
+            cargaId,
+            marca: r.marca,
+            skuProveedor: r.sku_proveedor,
+            skuInterno: r.sku_interno,
+            descripcion: r.descripcion,
+            seccion: r.seccion,
+            precioNeto: r.precio_neto,
+            precioConIva: r.precio_con_iva,
+            alicuotaIva: r.alicuota_iva,
+            moneda: r.moneda ?? "ARS",
+            unidad: r.unidad,
+            fechaVigencia: r.fecha_vigencia,
+            vigente: true,
+            rawData: r.raw_data as unknown as Prisma.InputJsonValue,
+          })),
+        });
+      }
+    },
+    // Default de Prisma (5s) puede quedarse corto en archivos grandes
+    // (ej. el de 22.623 filas de contexto.md) entre el update de superadas y
+    // los createMany en lotes de 60.
+    { timeout: 30000 }
+  );
 
   await prisma.carga.update({
     where: { id: cargaId },
@@ -151,6 +186,8 @@ async function publicarOfertaRows(
         moneda: r.moneda ?? "ARS",
         fechaOferta: r.fecha_oferta!,
         horaOferta: r.hora_oferta!,
+        fechaHasta: r.fecha_hasta,
+        activa: true,
         archivoOrigen,
         rawData: r.raw_data as unknown as Prisma.InputJsonValue,
       })),

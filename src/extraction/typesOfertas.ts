@@ -13,6 +13,7 @@ export const CANONICAL_FIELDS_OFERTAS = [
   "moneda",
   "fecha_oferta",
   "hora_oferta",
+  "fecha_hasta",
 ] as const;
 
 export type OfertaField = (typeof CANONICAL_FIELDS_OFERTAS)[number];
@@ -32,6 +33,10 @@ export type OfertaMetadata = {
   numero_oferta?: string | null;
   fecha_oferta?: string | null;
   hora_oferta?: string | null;
+  // Vencimiento de la oferta (YYYY-MM-DD), si el archivo/banner lo declara
+  // con una fecha concreta ("válida todo julio"). null = sin fecha fija
+  // ("hasta agotar stock") — se cierra manualmente, no expira solo.
+  fecha_hasta?: string | null;
 };
 
 // Fila ya resuelta (mapeo aplicado + fallback de metadata) pero antes de
@@ -51,5 +56,6 @@ export type OfertaRowNormalized = {
   moneda: string | null;
   fecha_oferta: string | null;
   hora_oferta: string | null;
+  fecha_hasta: string | null;
   raw_data: Record<string, unknown>;
 };
