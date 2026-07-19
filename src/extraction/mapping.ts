@@ -111,11 +111,33 @@ export function toNumberOrNull(value: unknown): number | null {
   if (typeof value === "number") return Number.isFinite(value) ? value : null;
   // Precios reales vienen como "$ 1.985,78" (separador de miles ".",
   // decimales ","); limpiamos antes de convertir.
-  const limpio = String(value)
-    .replace(/[^\d,.-]/g, "")
-    .replace(/\.(?=\d{3}(?:\D|$))/g, "")
-    .replace(",", ".");
-  const n = Number(limpio);
+  const limpio = String(value).replace(/[^\d,.-]/g, "");
+  const tieneComa = limpio.includes(",");
+  const puntos = (limpio.match(/\./g) ?? []).length;
+
+  let normalizado: string;
+  if (tieneComa) {
+    // La coma marca los decimales sin ambigüedad -> todo "." es separador
+    // de miles.
+    normalizado = limpio.replace(/\./g, "").replace(",", ".");
+  } else if (puntos > 1) {
+    // Más de un "." sin coma: un número real nunca tiene dos puntos
+    // decimales, así que solo puede ser miles agrupados ("1.234.567").
+    normalizado = limpio.replace(/\./g, "");
+  } else if (/^-?\d{1,3}\.\d{3}$/.test(limpio)) {
+    // Único "." con exactamente 3 dígitos a cada lado del rango típico de
+    // miles ("1.985"). Es ambiguo en abstracto (podría ser 1985 o 1.985),
+    // pero un separador de miles real agrupa desde el final del entero, así
+    // que la parte antes del punto tiene que tener como máximo 3 dígitos
+    // -si tuviera más, harían falta más puntos, como en "101.243.285"-.
+    // Con 4+ dígitos antes del único punto (ej. "101243.285", precio real
+    // con 3 decimales) no puede ser miles y se deja como decimal.
+    normalizado = limpio.replace(".", "");
+  } else {
+    normalizado = limpio;
+  }
+
+  const n = Number(normalizado);
   return Number.isFinite(n) ? n : null;
 }
 
