@@ -58,6 +58,10 @@ archivos, parsear xlsx/xls, aplicar un mapeo ya aprobado). Lo que sí la
 necesita (extraer pdf/png, sugerir mapeo de un proveedor nuevo) falla con un
 error claro (`Falta OPENROUTER_API_KEY...`) en vez de romper el proceso.
 
+```bash
+npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
+```
+
 ## Modelo de datos
 
 - `Proveedor` — un proveedor puede vender varias marcas.
@@ -172,7 +176,11 @@ error claro (`Falta OPENROUTER_API_KEY...`) en vez de romper el proceso.
   (columna origen → campo canónico o `null`), que **no se aplica sola**,
   queda para aprobación humana. `applyMapping` convierte filas crudas al
   schema canónico, con parseo tolerante de precios (`"$ 1.985,78"` →
-  `1985.78`) y columnas no mapeadas van a `raw_data`.
+  `1985.78`) y columnas no mapeadas van a `raw_data`. `toNumberOrNull`
+  (usado también por `mappingOfertas.ts`) distingue "." como separador de
+  miles de un decimal real de 3 cifras (ej. `"101243.285"`, un precio con
+  varios dígitos enteros, no debe leerse como `101243285`) — ver
+  `mapping.test.ts` para los casos límite cubiertos.
 - `typesOfertas.ts` / `mappingOfertas.ts` / `ofertaMetadata.ts` — paralelos a
   `types.ts`/`mapping.ts` para el schema de `Oferta` (ver docs/plan-ofertas.md
   y contexto.md, sección "Schema canónico (ofertas)"): mismo mecanismo de
