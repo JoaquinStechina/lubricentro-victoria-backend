@@ -1,7 +1,7 @@
 import { prisma } from "../db.js";
 import { getOpenRouterClient } from "../openrouter.js";
 import { extractJsonObject } from "./llmJson.js";
-import { toStringOrNull, toNumberOrNull } from "./mapping.js";
+import { toStringOrNull, toNumberOrNull, buildRepresentativeSample } from "./mapping.js";
 import {
   CANONICAL_FIELDS_OFERTAS,
   type OfertaField,
@@ -55,7 +55,7 @@ export async function suggestMappingOfertas(
 ): Promise<OfertaColumnMapping> {
   const client = getOpenRouterClient();
 
-  const muestra = sampleRows.slice(0, 5).map((row) => {
+  const muestra = buildRepresentativeSample(headers, sampleRows).map((row) => {
     const limpio: ExtractedRow = {};
     for (const h of headers) limpio[h] = row[h];
     return limpio;

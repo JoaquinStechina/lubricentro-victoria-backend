@@ -11,6 +11,41 @@ import {
 
 const MAPPING_MODEL = process.env.OPENROUTER_MAPPING_MODEL || "anthropic/claude-sonnet-5";
 
+const MAX_SAMPLE_ROWS = 60;
+
+// Antes se mandaban las primeras 5 filas de `sampleRows` sin más: para un
+// archivo de una sola hoja alcanza, pero en archivos con muchas hojas de
+// layout distinto (ej. BOR&UR, 43 hojas — ver contexto.md) esas 5 filas son
+// casi siempre de la primera hoja nada más, así que las columnas exclusivas
+// de las hojas 2..43 le llegaban al LLM sin ningún dato de ejemplo (todo
+// `null`), y terminaba adivinando el mapeo solo por el nombre de columna.
+// Agrupamos por `__hoja` (lo deja excel.ts en cada fila, ver mapping.ts más
+// abajo) para asegurar que toda hoja aporte al menos una fila de muestra.
+export function buildRepresentativeSample(
+  headers: string[],
+  rows: ExtractedRow[],
+  cap = MAX_SAMPLE_ROWS
+): ExtractedRow[] {
+  const grupos = new Map<string, ExtractedRow[]>();
+  for (const row of rows) {
+    const clave = typeof row.__hoja === "string" ? row.__hoja : "";
+    const grupo = grupos.get(clave);
+    if (grupo) grupo.push(row);
+    else grupos.set(clave, [row]);
+  }
+
+  // Con pocas hojas priorizamos profundidad (más filas por hoja, mejor
+  // contexto); con muchas priorizamos amplitud (al menos 1 por hoja para no
+  // dejar ninguna sin representar, aunque eso implique superar el cap).
+  const porGrupo = grupos.size <= 5 ? 5 : Math.max(1, Math.floor(cap / grupos.size));
+
+  const muestra: ExtractedRow[] = [];
+  for (const filasGrupo of grupos.values()) {
+    muestra.push(...filasGrupo.slice(0, porGrupo));
+  }
+  return muestra;
+}
+
 // Busca un mapeo ya aprobado para este proveedor (etapa 3 del pipeline).
 // Si ninguna columna actual coincide con lo guardado, probablemente le
 // cambiaron los headers al proveedor: mejor pedir revisión de nuevo en vez
@@ -48,7 +83,7 @@ export async function suggestMapping(
 ): Promise<ColumnMapping> {
   const client = getOpenRouterClient();
 
-  const muestra = sampleRows.slice(0, 5).map((row) => {
+  const muestra = buildRepresentativeSample(headers, sampleRows).map((row) => {
     const limpio: ExtractedRow = {};
     for (const h of headers) limpio[h] = row[h];
     return limpio;

@@ -124,6 +124,14 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
 - `GET /api/uploads` / `GET /api/uploads/:id` — estado de las cargas,
   incluyendo `filasExtraidas`/`mapeoSugerido` cuando está en revisión o
   esperando confirmación.
+- `GET /api/uploads/:id/advertencias` — etapa 5 (ver `contexto.md` y
+  "Extracción" más abajo): corre los chequeos determinísticos
+  (`advertencias.ts` / `advertenciasOfertas.ts` según `carga.tipoDatos`)
+  sobre las filas ya extraídas y el mapeo sugerido/aprobado, y devuelve
+  `{"advertencias": [{"fila": <índice>, "campo": <string>, "mensaje":
+  <string>}, ...]}`. Se calcula on-demand cuando el frontend abre la
+  pantalla de revisión, no durante `/procesar` — no bloquea ni modifica
+  nada, es puramente informativo.
 - `GET /api/proveedores` — lista `{id, nombre}` de proveedores existentes,
   para el autocomplete del formulario de carga (evita crear un proveedor
   duplicado por un typo en el nombre).
@@ -174,13 +182,39 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
 - `mapping.ts` — reusa `MapeoColumna` (filtrado por `tipoDatos: "catalogo"`)
   si cubre alguna columna detectada; si no, le pide al LLM una sugerencia
   (columna origen → campo canónico o `null`), que **no se aplica sola**,
-  queda para aprobación humana. `applyMapping` convierte filas crudas al
-  schema canónico, con parseo tolerante de precios (`"$ 1.985,78"` →
-  `1985.78`) y columnas no mapeadas van a `raw_data`. `toNumberOrNull`
-  (usado también por `mappingOfertas.ts`) distingue "." como separador de
-  miles de un decimal real de 3 cifras (ej. `"101243.285"`, un precio con
-  varios dígitos enteros, no debe leerse como `101243285`) — ver
-  `mapping.test.ts` para los casos límite cubiertos.
+  queda para aprobación humana. La muestra de filas que se le manda al LLM
+  para esa sugerencia se arma con `buildRepresentativeSample` (agrupa las
+  filas por `__hoja` y garantiza al menos una fila de ejemplo por hoja, con
+  más profundidad si hay pocas) en vez de tomar las primeras N filas del
+  archivo ya combinado — antes, en archivos con muchas hojas de layout
+  distinto (ej. BOR&UR, 43 hojas), esas primeras filas eran casi siempre de
+  la primera hoja, y las columnas exclusivas de las demás le llegaban al LLM
+  sin ningún dato de ejemplo (todo `null`). Reusada tal cual por
+  `mappingOfertas.ts`, que tenía el mismo problema. `applyMapping` convierte
+  filas crudas al schema canónico, con parseo tolerante de precios
+  (`"$ 1.985,78"` → `1985.78`) y columnas no mapeadas van a `raw_data`.
+  `toNumberOrNull` (usado también por `mappingOfertas.ts`) distingue "."
+  como separador de miles de un decimal real de 3 cifras (ej.
+  `"101243.285"`, un precio con varios dígitos enteros, no debe leerse como
+  `101243285`) — ver `mapping.test.ts` para los casos límite cubiertos.
+- `advertencias.ts` / `advertenciasOfertas.ts` — etapa 5 del plan original
+  (ver `contexto.md`), calculada como paso aparte cuando se abre la pantalla
+  de revisión (`GET /api/uploads/:id/advertencias`, ver Endpoints), no
+  durante `procesarCarga`. Son chequeos determinísticos (sin LLM) que **no
+  bloquean ni corrigen nada solos** — el humano ve la advertencia en la
+  pantalla de revisión y decide si la ignora, corrige a mano, o excluye la
+  fila. Catálogo (`advertencias.ts`): precio ≤ 0, SKU duplicado dentro de la
+  misma carga, salto de precio (±30%) vs. el último valor conocido de ese
+  proveedor+SKU en `ProductoPrecio`. Ofertas (`advertenciasOfertas.ts`,
+  paralelo, no una fusión genérica — mismo criterio que
+  `mapping.ts`/`mappingOfertas.ts`): precio_unitario ≤ 0, tramo duplicado
+  (mismo `sku_proveedor` + `desde_cantidad`, a diferencia de catálogo donde
+  el SKU repetido ya es en sí la señal — acá un SKU repetido con distinto
+  `desde_cantidad` es un tramo válido), salto de precio comparado por tramo
+  exacto contra la última `Oferta` conocida, y campos obligatorios
+  faltantes (`OFERTA_REQUIRED_FIELDS`, exportado desde `processCarga.ts` y
+  reusado acá — misma lista que se valida como error duro recién al
+  confirmar, pero mostrada antes como advertencia temprana).
 - `typesOfertas.ts` / `mappingOfertas.ts` / `ofertaMetadata.ts` — paralelos a
   `types.ts`/`mapping.ts` para el schema de `Oferta` (ver docs/plan-ofertas.md
   y contexto.md, sección "Schema canónico (ofertas)"): mismo mecanismo de
@@ -210,7 +244,9 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
 - Cola/worker en vez de procesar sincrónicamente en el request — para
   archivos grandes o con muchas páginas de PDF, `POST /:id/procesar` puede
   tardar 1-2 minutos con el usuario esperando.
-- Validación automática antes de publicar (precios negativos/cero, SKU
-  duplicado, saltos de precio anómalos vs. la carga anterior) — hoy la
-  única validación es la revisión humana manual en la pantalla de
-  confirmación.
+- Las advertencias (`GET /:id/advertencias`, ver "Extracción") se calculan
+  una sola vez, cuando el frontend abre la pantalla de revisión — si el
+  usuario cambia el mapeo de columnas después, no se recalculan
+  automáticamente (habría que hacer un refetch manual o mover el chequeo al
+  cliente). Siguen siendo, de todas formas, solo advertencias: la única
+  validación que bloquea la publicación sigue siendo la revisión humana.

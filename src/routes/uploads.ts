@@ -9,11 +9,19 @@ import {
   confirmarCargaYPublicar,
   confirmarCargaYPublicarOferta,
 } from "../extraction/processCarga.js";
-import { CANONICAL_FIELDS, type ColumnMapping, type CanonicalField } from "../extraction/types.js";
+import { detectarAdvertencias } from "../extraction/advertencias.js";
+import { detectarAdvertenciasOfertas } from "../extraction/advertenciasOfertas.js";
+import {
+  CANONICAL_FIELDS,
+  type ColumnMapping,
+  type CanonicalField,
+  type ExtractedRow,
+} from "../extraction/types.js";
 import {
   CANONICAL_FIELDS_OFERTAS,
   type OfertaColumnMapping,
   type OfertaField,
+  type OfertaMetadata,
 } from "../extraction/typesOfertas.js";
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
@@ -152,6 +160,55 @@ uploadsRouter.post("/:id/procesar", async (req, res) => {
     return;
   }
   res.json(carga);
+});
+
+// Etapa 5 (ver contexto.md) calculada como paso aparte, a pedido de la
+// pantalla de revisión al abrirse — no durante procesarCarga, para no
+// alargar el procesamiento síncrono con queries extra. Bifurca por
+// tipoDatos: catálogo y ofertas tienen chequeos distintos (ver
+// advertencias.ts / advertenciasOfertas.ts) porque el shape de "duplicado" y
+// "salto de precio" no es el mismo en los dos casos.
+uploadsRouter.get("/:id/advertencias", async (req, res) => {
+  const id = Number(req.params.id);
+  const carga = await prisma.carga.findUnique({ where: { id } });
+  if (!carga) {
+    res.status(404).json({ error: "Carga no encontrada." });
+    return;
+  }
+  if (!carga.proveedorId) {
+    res.status(400).json({ error: "La carga no tiene proveedor asociado." });
+    return;
+  }
+  if (!carga.filasExtraidas) {
+    res.status(400).json({ error: "La carga no tiene filas extraídas todavía." });
+    return;
+  }
+
+  const { headers, rows } = carga.filasExtraidas as unknown as {
+    headers: string[];
+    rows: ExtractedRow[];
+  };
+
+  try {
+    const advertencias =
+      carga.tipoDatos === "oferta"
+        ? await detectarAdvertenciasOfertas(
+            carga.proveedorId,
+            headers,
+            rows,
+            (carga.mapeoSugerido as OfertaColumnMapping | null) ?? {},
+            (carga.metadataOferta as OfertaMetadata | null) ?? {}
+          )
+        : await detectarAdvertencias(
+            carga.proveedorId,
+            headers,
+            rows,
+            (carga.mapeoSugerido as ColumnMapping | null) ?? {}
+          );
+    res.json({ advertencias });
+  } catch (err) {
+    res.status(500).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
 
 // Aprueba (o corrige) el mapeo sugerido para una carga en

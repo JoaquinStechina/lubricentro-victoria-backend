@@ -94,7 +94,10 @@ async function publicarCanonicalRows(
   return canonicalRows.length;
 }
 
-const OFERTA_REQUIRED_FIELDS: (keyof OfertaRowNormalized)[] = [
+// Exportado para reusarlo en advertenciasOfertas.ts como advertencia
+// temprana no bloqueante (misma lista, distinto propósito: acá abajo es un
+// error duro al confirmar).
+export const OFERTA_REQUIRED_FIELDS: (keyof OfertaRowNormalized)[] = [
   "marca",
   "numero_oferta",
   "sku_proveedor",
