@@ -88,9 +88,13 @@ model MapeoColumna {
   proveedor     Proveedor @relation(fields: [proveedorId], references: [id])
   columnaOrigen String
   campoDestino  String
+  // "catalogo" | "oferta" — un proveedor puede tener una columna "SKU" en su
+  // catálogo y otra columna "SKU" en sus ofertas que mapee distinto; sin este
+  // discriminador colisionarían en la misma fila de mapeo aprobado.
+  tipoDatos     String   @default("catalogo")
   createdAt     DateTime @default(now())
 
-  @@unique([proveedorId, columnaOrigen])
+  @@unique([proveedorId, columnaOrigen, tipoDatos])
   @@map("mapeos_columna")
 }
 
@@ -104,7 +108,10 @@ model Carga {
   proveedor      Proveedor? @relation(fields: [proveedorId], references: [id])
   nombreArchivo  String
   rutaArchivo    String
-  tipoArchivo    String // xlsx | xls | pdf | png | jpg | jpeg
+  tipoArchivo    String // xlsx | xls | pdf | png | jpg | jpeg — formato del archivo
+  // "catalogo" | "oferta" — a diferencia de tipoArchivo (formato), esto dice
+  // si el archivo se publica en ProductoPrecio o en Oferta.
+  tipoDatos      String    @default("catalogo")
   // pendiente | procesando | revision_pendiente | confirmacion_pendiente |
   // completado | error. revision_pendiente = mapeo sugerido por IA sin
   // aprobar (proveedor nuevo o headers distintos); confirmacion_pendiente =
@@ -122,6 +129,10 @@ model Carga {
   // Queda pendiente de aprobación humana antes de escribirse en
   // MapeoColumna y aplicarse.
   mapeoSugerido  Json?
+  // Marca/n° de oferta/fecha/hora inferidos por IA del banner o del nombre
+  // de archivo cuando tipoDatos = "oferta" (ver docs/plan-ofertas.md). Campo
+  // separado de mapeoSugerido porque es un dato de archivo, no de columnas.
+  metadataOferta Json?
   productos      ProductoPrecio[]
   ofertas        Oferta[]
   createdAt      DateTime  @default(now())

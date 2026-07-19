@@ -7,8 +7,14 @@ import {
   procesarCarga,
   aprobarMapeoYPublicar,
   confirmarCargaYPublicar,
+  confirmarCargaYPublicarOferta,
 } from "../extraction/processCarga.js";
 import { CANONICAL_FIELDS, type ColumnMapping, type CanonicalField } from "../extraction/types.js";
+import {
+  CANONICAL_FIELDS_OFERTAS,
+  type OfertaColumnMapping,
+  type OfertaField,
+} from "../extraction/typesOfertas.js";
 
 const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
@@ -47,17 +53,22 @@ const upload = multer({
 export const uploadsRouter = Router();
 
 // Valida el shape de "mapeo" (columnaOrigen -> campoDestino) compartido por
-// /aprobar-mapeo y /confirmar. No exige que tenga entradas: una carga con
-// todos los valores tipeados a mano y ninguna columna mapeada es válida
-// para /confirmar (no lo es para /aprobar-mapeo, que chequea eso aparte).
-function parseMapeoBody(body: unknown): { mapping: ColumnMapping } | { error: string } {
+// /aprobar-mapeo y /confirmar, contra el set de campos canónicos que
+// corresponda (catálogo u ofertas, según carga.tipoDatos). No exige que
+// tenga entradas: una carga con todos los valores tipeados a mano y ninguna
+// columna mapeada es válida para /confirmar (no lo es para /aprobar-mapeo,
+// que chequea eso aparte).
+function parseMapeoBody(
+  body: unknown,
+  camposValidos: readonly string[]
+): { mapping: Record<string, string> } | { error: string } {
   if (!body || typeof body !== "object" || Array.isArray(body)) {
     return { error: "Falta 'mapeo' (objeto columnaOrigen -> campoDestino) en el body." };
   }
-  const mapping: ColumnMapping = {};
+  const mapping: Record<string, string> = {};
   for (const [columna, destino] of Object.entries(body)) {
-    if ((CANONICAL_FIELDS as readonly string[]).includes(destino as string)) {
-      mapping[columna] = destino as ColumnMapping[string];
+    if (camposValidos.includes(destino as string)) {
+      mapping[columna] = destino as string;
     }
   }
   return { mapping };
@@ -73,6 +84,9 @@ uploadsRouter.post("/", upload.single("file"), async (req, res) => {
 
   const ext = path.extname(req.file.originalname).toLowerCase();
   const proveedorNombre = typeof req.body.proveedor === "string" ? req.body.proveedor.trim() : "";
+  // "catalogo" (default, no rompe cargas existentes) | "oferta" — ver
+  // docs/plan-ofertas.md. Cualquier otro valor recibido se ignora.
+  const tipoDatos = req.body.tipoDatos === "oferta" ? "oferta" : "catalogo";
 
   let proveedorId: number | undefined;
   if (proveedorNombre) {
@@ -90,6 +104,7 @@ uploadsRouter.post("/", upload.single("file"), async (req, res) => {
       nombreArchivo: req.file.originalname,
       rutaArchivo: req.file.path,
       tipoArchivo: EXT_TO_TIPO[ext],
+      tipoDatos,
       estado: "pendiente",
     },
   });
@@ -141,26 +156,37 @@ uploadsRouter.post("/:id/procesar", async (req, res) => {
 
 // Aprueba (o corrige) el mapeo sugerido para una carga en
 // "revision_pendiente": lo guarda en MapeoColumna (se reusa en próximas
-// cargas del mismo proveedor) y publica los productos.
+// cargas del mismo proveedor) y publica los productos/ofertas, según
+// carga.tipoDatos.
 // Body: { "mapeo": { "<columna origen>": "<campo_canonico>", ... } }
 uploadsRouter.post("/:id/aprobar-mapeo", async (req, res) => {
   const id = Number(req.params.id);
-  const parsed = parseMapeoBody(req.body?.mapeo);
+  const carga = await prisma.carga.findUnique({ where: { id } });
+  if (!carga) {
+    res.status(404).json({ error: "Carga no encontrada." });
+    return;
+  }
+  const campos = carga.tipoDatos === "oferta" ? CANONICAL_FIELDS_OFERTAS : CANONICAL_FIELDS;
+
+  const parsed = parseMapeoBody(req.body?.mapeo, campos);
   if ("error" in parsed) {
     res.status(400).json({ error: parsed.error });
     return;
   }
   if (Object.keys(parsed.mapping).length === 0) {
     res.status(400).json({
-      error: `Ninguna entrada de 'mapeo' tiene un campo destino válido. Válidos: ${CANONICAL_FIELDS.join(", ")}`,
+      error: `Ninguna entrada de 'mapeo' tiene un campo destino válido. Válidos: ${campos.join(", ")}`,
     });
     return;
   }
 
   try {
-    const publicados = await aprobarMapeoYPublicar(id, parsed.mapping);
-    const carga = await prisma.carga.findUnique({ where: { id }, include: { proveedor: true } });
-    res.json({ carga, publicados });
+    const publicados = await aprobarMapeoYPublicar(
+      id,
+      parsed.mapping as ColumnMapping | OfertaColumnMapping
+    );
+    const cargaFinal = await prisma.carga.findUnique({ where: { id }, include: { proveedor: true } });
+    res.json({ carga: cargaFinal, publicados });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
@@ -169,11 +195,19 @@ uploadsRouter.post("/:id/aprobar-mapeo", async (req, res) => {
 // Confirma una carga en revisión: publica exactamente las filas finales que
 // mandó el cliente (ya editadas a mano si hizo falta), a diferencia de
 // /aprobar-mapeo que vuelve a derivar las filas de `filasExtraidas` en el
-// servidor. Body: { "mapeo": {...} (puede ir vacío), "filas": [{<campo
+// servidor. Bifurca por carga.tipoDatos entre ProductoPrecio (catálogo) y
+// Oferta. Body: { "mapeo": {...} (puede ir vacío), "filas": [{<campo
 // canónico>: <valor>, ...}, ...] }.
 uploadsRouter.post("/:id/confirmar", async (req, res) => {
   const id = Number(req.params.id);
-  const parsed = parseMapeoBody(req.body?.mapeo ?? {});
+  const carga = await prisma.carga.findUnique({ where: { id } });
+  if (!carga) {
+    res.status(404).json({ error: "Carga no encontrada." });
+    return;
+  }
+  const campos = carga.tipoDatos === "oferta" ? CANONICAL_FIELDS_OFERTAS : CANONICAL_FIELDS;
+
+  const parsed = parseMapeoBody(req.body?.mapeo ?? {}, campos);
   if ("error" in parsed) {
     res.status(400).json({ error: parsed.error });
     return;
@@ -186,13 +220,20 @@ uploadsRouter.post("/:id/confirmar", async (req, res) => {
   }
 
   try {
-    const publicados = await confirmarCargaYPublicar(
-      id,
-      parsed.mapping,
-      filas as Array<Partial<Record<CanonicalField, unknown>> & { raw_data?: unknown }>
-    );
-    const carga = await prisma.carga.findUnique({ where: { id }, include: { proveedor: true } });
-    res.json({ carga, publicados });
+    const publicados =
+      carga.tipoDatos === "oferta"
+        ? await confirmarCargaYPublicarOferta(
+            id,
+            parsed.mapping as OfertaColumnMapping,
+            filas as Array<Partial<Record<OfertaField, unknown>> & { raw_data?: unknown }>
+          )
+        : await confirmarCargaYPublicar(
+            id,
+            parsed.mapping as ColumnMapping,
+            filas as Array<Partial<Record<CanonicalField, unknown>> & { raw_data?: unknown }>
+          );
+    const cargaFinal = await prisma.carga.findUnique({ where: { id }, include: { proveedor: true } });
+    res.json({ carga: cargaFinal, publicados });
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }

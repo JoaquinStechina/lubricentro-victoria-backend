@@ -1,10 +1,23 @@
 import fs from "node:fs";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
-import { extractExcelWithFallback, combineTables } from "./excel.js";
-import { extractWithVision } from "./vision.js";
+import { extractExcelWithFallback, combineTables, extractBannerLines } from "./excel.js";
+import { extractWithVision, extractOfertaWithVision } from "./vision.js";
 import { getExistingMapping, suggestMapping, applyMapping, normalizeCanonicalRow } from "./mapping.js";
+import {
+  getExistingMappingOferta,
+  suggestMappingOfertas,
+  applyMappingOfertas,
+  normalizeOfertaRow,
+} from "./mappingOfertas.js";
+import { detectOfertaMetadata } from "./ofertaMetadata.js";
 import type { CanonicalField, CanonicalRow, ColumnMapping, ExtractedRow } from "./types.js";
+import type {
+  OfertaField,
+  OfertaColumnMapping,
+  OfertaMetadata,
+  OfertaRowNormalized,
+} from "./typesOfertas.js";
 
 const MIME_BY_TIPO: Record<string, "application/pdf" | "image/png" | "image/jpeg"> = {
   pdf: "application/pdf",
@@ -21,14 +34,21 @@ function chunk<T>(items: T[], size: number): T[][] {
 
 // Guarda el mapeo aprobado (o corregido a mano) para reusarlo en próximas
 // cargas del mismo proveedor sin volver a pedir revisión de columnas.
-async function upsertMapeoColumnas(proveedorId: number, mapping: ColumnMapping): Promise<void> {
+// tipoDatos separa el mapeo de catálogo del de ofertas (ver
+// docs/plan-ofertas.md): un proveedor puede tener una columna "SKU" mapeada
+// distinto en cada uno.
+async function upsertMapeoColumnas(
+  proveedorId: number,
+  mapping: Record<string, string>,
+  tipoDatos: "catalogo" | "oferta" = "catalogo"
+): Promise<void> {
   for (const [columnaOrigen, campoDestino] of Object.entries(mapping)) {
     await prisma.mapeoColumna.upsert({
       where: {
-        proveedorId_columnaOrigen: { proveedorId, columnaOrigen },
+        proveedorId_columnaOrigen_tipoDatos: { proveedorId, columnaOrigen, tipoDatos },
       },
       update: { campoDestino },
-      create: { proveedorId, columnaOrigen, campoDestino },
+      create: { proveedorId, columnaOrigen, campoDestino, tipoDatos },
     });
   }
 }
@@ -74,15 +94,90 @@ async function publicarCanonicalRows(
   return canonicalRows.length;
 }
 
+const OFERTA_REQUIRED_FIELDS: (keyof OfertaRowNormalized)[] = [
+  "marca",
+  "numero_oferta",
+  "sku_proveedor",
+  "descripcion",
+  "desde_cantidad",
+  "descuento_pct",
+  "precio_unitario",
+  "fecha_oferta",
+  "hora_oferta",
+];
+
+// A diferencia de ProductoPrecio (todos los campos nullable), el schema de
+// Oferta exige estos campos NOT NULL (ver prisma/schema.prisma) — se valida
+// acá con un mensaje claro en vez de dejar que el INSERT reviente con un
+// error críptico de Prisma.
+function validarFilasOferta(rows: OfertaRowNormalized[]): void {
+  rows.forEach((r, idx) => {
+    const faltantes = OFERTA_REQUIRED_FIELDS.filter(
+      (campo) => r[campo] === null || r[campo] === undefined
+    );
+    if (faltantes.length > 0) {
+      throw new Error(
+        `Fila ${idx + 1} (SKU ${r.sku_proveedor ?? "sin dato"}): faltan campos obligatorios: ${faltantes.join(", ")}.`
+      );
+    }
+  });
+}
+
+// Paralela a publicarCanonicalRows: inserta en Oferta en vez de
+// ProductoPrecio (ver docs/plan-ofertas.md, punto 5).
+async function publicarOfertaRows(
+  cargaId: number,
+  proveedorId: number,
+  archivoOrigen: string,
+  rows: OfertaRowNormalized[]
+): Promise<number> {
+  validarFilasOferta(rows);
+
+  for (const batch of chunk(rows, 60)) {
+    await prisma.oferta.createMany({
+      data: batch.map((r) => ({
+        proveedorId,
+        cargaId,
+        marca: r.marca!,
+        numeroOferta: r.numero_oferta!,
+        skuProveedor: r.sku_proveedor!,
+        descripcion: r.descripcion!,
+        desdeCantidad: r.desde_cantidad!,
+        descuentoPct: r.descuento_pct!,
+        precioUnitario: r.precio_unitario!,
+        moneda: r.moneda ?? "ARS",
+        fechaOferta: r.fecha_oferta!,
+        horaOferta: r.hora_oferta!,
+        archivoOrigen,
+        rawData: r.raw_data as unknown as Prisma.InputJsonValue,
+      })),
+    });
+  }
+
+  await prisma.carga.update({
+    where: { id: cargaId },
+    data: {
+      estado: "completado",
+      mensajeError: null,
+      filasExtraidas: Prisma.JsonNull,
+      mapeoSugerido: Prisma.JsonNull,
+      metadataOferta: Prisma.JsonNull,
+    },
+  });
+
+  return rows.length;
+}
+
 // Orquesta las etapas 2-4 del pipeline (ver contexto.md) para una carga ya
 // recibida: extraer la tabla (determinístico para xlsx/xls, con fallback a
 // IA para hojas con headers atípicos; con IA de visión para pdf/png/jpg) y
 // resolver el mapeo de columnas (reusar el aprobado o pedir una sugerencia
-// si el proveedor es nuevo / le cambiaron los headers). Nunca publica sola:
-// toda carga queda esperando confirmación humana antes de escribirse en
-// ProductoPrecio (ver confirmarCargaYPublicar) — incluso un proveedor ya
-// conocido con mapeo aprobado, porque el objetivo es que un humano pueda
-// revisar/corregir los valores extraídos antes de que entren a la base.
+// si el proveedor es nuevo / le cambiaron los headers). Si tipoDatos es
+// "oferta" (ver docs/plan-ofertas.md), además intenta detectar marca/n° de
+// oferta/fecha/hora "de todo el archivo" y usa el mapeo/schema de ofertas en
+// vez del de catálogo. Nunca publica sola: toda carga queda esperando
+// confirmación humana antes de escribirse en ProductoPrecio/Oferta (ver
+// confirmarCargaYPublicar/confirmarCargaYPublicarOferta).
 export async function procesarCarga(cargaId: number): Promise<void> {
   const carga = await prisma.carga.findUniqueOrThrow({ where: { id: cargaId } });
 
@@ -98,16 +193,20 @@ export async function procesarCarga(cargaId: number): Promise<void> {
       );
     }
 
+    const esOferta = carga.tipoDatos === "oferta";
+
     // Si ya habíamos extraído las filas en un intento anterior (por ejemplo,
     // si esta misma carga falló en el paso de sugerir el mapeo por un error
     // transitorio de la API), las reusamos en vez de volver a parsear el
-    // archivo entero.
+    // archivo entero (y, para ofertas, reusamos también la metadata ya
+    // detectada en vez de volver a llamar al LLM).
     const cache = carga.filasExtraidas as unknown as
       | { headers: string[]; rows: ExtractedRow[] }
       | null;
 
     let headers: string[];
     let rows: ExtractedRow[];
+    let metadata = carga.metadataOferta as unknown as OfertaMetadata | null;
 
     if (cache) {
       ({ headers, rows } = cache);
@@ -120,27 +219,43 @@ export async function procesarCarga(cargaId: number): Promise<void> {
           throw new Error("No se detectó ninguna tabla de productos en el archivo.");
         }
         ({ headers, rows } = combineTables(tables));
+        if (esOferta) {
+          metadata = await detectOfertaMetadata(carga.nombreArchivo, extractBannerLines(buffer));
+        }
       } else {
         const mimeType = MIME_BY_TIPO[carga.tipoArchivo];
         if (!mimeType) {
           throw new Error(`Tipo de archivo no soportado para extracción: ${carga.tipoArchivo}`);
         }
-        const tables = await extractWithVision(buffer, mimeType, carga.nombreArchivo);
-        ({ headers, rows } = combineTables(tables));
+        if (esOferta) {
+          const extraido = await extractOfertaWithVision(buffer, mimeType, carga.nombreArchivo);
+          ({ headers, rows } = combineTables(extraido.tables));
+          metadata = extraido.metadata;
+        } else {
+          const tables = await extractWithVision(buffer, mimeType, carga.nombreArchivo);
+          ({ headers, rows } = combineTables(tables));
+        }
       }
 
       if (rows.length === 0) {
-        throw new Error("No se encontraron filas de producto en el archivo.");
+        throw new Error("No se encontraron filas en el archivo.");
       }
 
       await prisma.carga.update({
         where: { id: cargaId },
-        data: { filasExtraidas: { headers, rows } as unknown as Prisma.InputJsonValue },
+        data: {
+          filasExtraidas: { headers, rows } as unknown as Prisma.InputJsonValue,
+          metadataOferta: metadata ? (metadata as unknown as Prisma.InputJsonValue) : undefined,
+        },
       });
     }
 
-    const mapeoExistente = await getExistingMapping(carga.proveedorId, headers);
-    const mapeoParaRevision = mapeoExistente ?? (await suggestMapping(headers, rows));
+    const mapeoExistente = esOferta
+      ? await getExistingMappingOferta(carga.proveedorId, headers)
+      : await getExistingMapping(carga.proveedorId, headers);
+    const mapeoParaRevision =
+      mapeoExistente ??
+      (esOferta ? await suggestMappingOfertas(headers, rows) : await suggestMapping(headers, rows));
 
     await prisma.carga.update({
       where: { id: cargaId },
@@ -166,11 +281,11 @@ export async function procesarCarga(cargaId: number): Promise<void> {
 // para reusarlo en próximas cargas del mismo proveedor, y publica las filas
 // que ya estaban extraídas (no hace falta re-parsear el archivo) aplicando
 // ese mapeo. Se mantiene por compatibilidad con pruebas existentes; el
-// frontend nuevo usa confirmarCargaYPublicar, que además permite editar los
-// valores de cada fila, no solo el mapeo.
+// frontend nuevo usa confirmarCargaYPublicar/confirmarCargaYPublicarOferta,
+// que además permite editar los valores de cada fila, no solo el mapeo.
 export async function aprobarMapeoYPublicar(
   cargaId: number,
-  mapping: ColumnMapping
+  mapping: ColumnMapping | OfertaColumnMapping
 ): Promise<number> {
   const carga = await prisma.carga.findUniqueOrThrow({ where: { id: cargaId } });
   if (!carga.proveedorId) throw new Error("La carga no tiene proveedor asociado.");
@@ -183,8 +298,15 @@ export async function aprobarMapeoYPublicar(
     rows: ExtractedRow[];
   };
 
-  await upsertMapeoColumnas(carga.proveedorId, mapping);
-  const canonicalRows = applyMapping(headers, rows, mapping);
+  if (carga.tipoDatos === "oferta") {
+    const metadata = (carga.metadataOferta as unknown as OfertaMetadata | null) ?? {};
+    await upsertMapeoColumnas(carga.proveedorId, mapping, "oferta");
+    const ofertaRows = applyMappingOfertas(headers, rows, mapping as OfertaColumnMapping, metadata);
+    return publicarOfertaRows(cargaId, carga.proveedorId, carga.nombreArchivo, ofertaRows);
+  }
+
+  await upsertMapeoColumnas(carga.proveedorId, mapping, "catalogo");
+  const canonicalRows = applyMapping(headers, rows, mapping as ColumnMapping);
   return publicarCanonicalRows(cargaId, carga.proveedorId, canonicalRows);
 }
 
@@ -202,7 +324,26 @@ export async function confirmarCargaYPublicar(
   if (!carga.proveedorId) throw new Error("La carga no tiene proveedor asociado.");
   if (filasFinales.length === 0) throw new Error("No hay filas para publicar.");
 
-  await upsertMapeoColumnas(carga.proveedorId, mapping);
+  await upsertMapeoColumnas(carga.proveedorId, mapping, "catalogo");
   const canonicalRows = filasFinales.map(normalizeCanonicalRow);
   return publicarCanonicalRows(cargaId, carga.proveedorId, canonicalRows);
+}
+
+// Paralela a confirmarCargaYPublicar, pero para ofertas: las filas finales
+// ya vienen con marca/numero_oferta/fecha_oferta/hora_oferta resueltos por
+// fila (el frontend aplica el fallback a la metadata de archivo antes de
+// mandarlas, igual que aplica el mapeo — ver ReviewTableOfertas.tsx), así
+// que acá solo hace falta normalizar y validar antes de publicar.
+export async function confirmarCargaYPublicarOferta(
+  cargaId: number,
+  mapping: OfertaColumnMapping,
+  filasFinales: Array<Partial<Record<OfertaField, unknown>> & { raw_data?: unknown }>
+): Promise<number> {
+  const carga = await prisma.carga.findUniqueOrThrow({ where: { id: cargaId } });
+  if (!carga.proveedorId) throw new Error("La carga no tiene proveedor asociado.");
+  if (filasFinales.length === 0) throw new Error("No hay filas para publicar.");
+
+  await upsertMapeoColumnas(carga.proveedorId, mapping, "oferta");
+  const rows = filasFinales.map(normalizeOfertaRow);
+  return publicarOfertaRows(cargaId, carga.proveedorId, carga.nombreArchivo, rows);
 }

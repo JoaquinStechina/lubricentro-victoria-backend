@@ -191,6 +191,24 @@ export async function extractExcelWithFallback(buffer: Buffer): Promise<Extracte
   return tables;
 }
 
+// Junta el texto de las filas que quedan antes del header detectado (o, si
+// no se detectó ninguno, las primeras filas de la hoja) — es el "banner" del
+// que suelen salir marca/n° de oferta/fecha/hora en archivos de ofertas (ver
+// docs/plan-ofertas.md, punto 2, y ofertaMetadata.ts, que consume esto).
+export function extractBannerLines(buffer: Buffer): string[] {
+  const lines: string[] = [];
+  for (const { grid } of readWorkbookGrids(buffer)) {
+    const headerIndex = findHeaderRowIndex(grid);
+    const limit = headerIndex ?? Math.min(grid.length, 10);
+    for (let i = 0; i < limit; i++) {
+      const row = grid[i] ?? [];
+      const texto = row.map(normalizeCell).filter((c) => c !== "").join(" ");
+      if (texto) lines.push(texto);
+    }
+  }
+  return lines;
+}
+
 export function combineTables(tables: ExtractedTable[]): {
   headers: string[];
   rows: ExtractedRow[];

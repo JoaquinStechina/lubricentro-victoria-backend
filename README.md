@@ -63,32 +63,66 @@ error claro (`Falta OPENROUTER_API_KEY...`) en vez de romper el proceso.
 - `Proveedor` — un proveedor puede vender varias marcas.
 - `ProductoPrecio` / `Oferta` — el schema canónico de `contexto.md`. Nunca se
   hace `UPDATE` destructivo de precios: cada carga nueva inserta filas con su
-  propia `fechaVigencia`.
-- `MapeoColumna` — mapeo columna origen → campo canónico, por proveedor.
-  Se guarda una vez que un humano aprueba el mapeo sugerido y se reusa en
-  cargas siguientes del mismo proveedor.
-- `Carga` — una fila por archivo subido. Estados: `pendiente` → `procesando`
-  → `completado` | `error` | `revision_pendiente` (esperando que se apruebe
-  el mapeo sugerido).
+  propia `fechaVigencia` (`ProductoPrecio`) o `fechaOferta`/`horaOferta`
+  (`Oferta`). A diferencia de `ProductoPrecio` (todos los campos nullable),
+  `Oferta` exige `marca`/`numeroOferta`/`skuProveedor`/`descripcion`/
+  `desdeCantidad`/`descuentoPct`/`precioUnitario`/`fechaOferta`/`horaOferta`
+  no nulos — se valida antes de publicar (ver `processCarga.ts`).
+- `MapeoColumna` — mapeo columna origen → campo canónico, por proveedor y
+  por `tipoDatos` (`"catalogo"` | `"oferta"`, ver `Carga` abajo): un mismo
+  proveedor puede tener una columna "SKU" mapeada distinto en su catálogo y
+  en sus ofertas. Se guarda una vez que un humano aprueba el mapeo sugerido
+  y se reusa en cargas siguientes del mismo proveedor y tipo.
+- `Carga` — una fila por archivo subido. `tipoDatos` (`"catalogo"` default |
+  `"oferta"`) decide si publica en `ProductoPrecio` o en `Oferta` — no
+  confundir con `tipoArchivo` (xlsx/pdf/png, el *formato*). Para ofertas,
+  `metadataOferta` guarda marca/n° de oferta/fecha/hora detectados por IA
+  del banner o nombre de archivo (ver `ofertaMetadata.ts`), editables en la
+  pantalla de revisión antes de confirmar. Estados: `pendiente` →
+  `procesando` → `revision_pendiente` (proveedor nuevo o headers distintos,
+  mapeo sugerido por IA sin aprobar) | `confirmacion_pendiente` (proveedor
+  ya conocido, mapeo aprobado de antes, solo falta confirmar los valores) →
+  `completado` | `error`. **Ninguna carga se publica sola** — `procesarCarga`
+  nunca llega a `completado` por sí misma, siempre hace falta la
+  confirmación humana de `POST /:id/confirmar` (ver Endpoints).
 
 ## Endpoints
 
 - `GET /api/health`
-- `POST /api/uploads` — multipart, campo `file` (xlsx/xls/pdf/png/jpg) y
-  opcionalmente `proveedor` (nombre). Guarda el archivo en `uploads/` y crea
-  una `Carga` en estado `pendiente`.
-- `POST /api/uploads/:id/procesar` — extrae la tabla del archivo y:
-  - si el proveedor ya tiene un mapeo de columnas aprobado que coincide con
-    los headers detectados → publica los productos directo, `completado`.
+- `POST /api/uploads` — multipart, campo `file` (xlsx/xls/pdf/png/jpg),
+  opcionalmente `proveedor` (nombre) y `tipoDatos` (`"catalogo"` default |
+  `"oferta"`). Guarda el archivo en `uploads/` y crea una `Carga` en estado
+  `pendiente`.
+- `POST /api/uploads/:id/procesar` — extrae la tabla del archivo y resuelve
+  el mapeo (reusado o sugerido por IA) contra el schema que corresponda
+  según `carga.tipoDatos`, pero **nunca publica sola**:
+  - si el proveedor ya tiene un mapeo de columnas aprobado (para ese mismo
+    `tipoDatos`) que coincide con los headers detectados → queda en
+    `confirmacion_pendiente` con ese mapeo precargado, esperando que un
+    humano confirme los valores.
   - si es un proveedor nuevo (o le cambiaron los headers) → le pide al LLM
-    una sugerencia de mapeo y la deja en `revision_pendiente` (nunca se
-    aplica un mapeo sin aprobación humana).
+    una sugerencia de mapeo y la deja en `revision_pendiente`.
+  - si `tipoDatos` es `"oferta"`, además intenta detectar marca/n° de
+    oferta/fecha/hora de archivo (`metadataOferta`) — ver `ofertaMetadata.ts`.
 - `POST /api/uploads/:id/aprobar-mapeo` — body
-  `{"mapeo": {"<columna origen>": "<campo_canonico>", ...}}`. Guarda el
-  mapeo (aprobado o corregido a mano) en `MapeoColumna` para reusarlo en
-  próximas cargas del mismo proveedor, y publica los productos de esta carga.
+  `{"mapeo": {"<columna origen>": "<campo_canonico>", ...}}` (campos
+  válidos según `carga.tipoDatos`). Guarda el mapeo en `MapeoColumna` y
+  publica los productos/ofertas **re-derivándolos de `filasExtraidas`** (no
+  acepta valores editados a mano, solo reasignación de mapeo). Se mantiene
+  por compatibilidad; el frontend usa `/confirmar`.
+- `POST /api/uploads/:id/confirmar` — body `{"mapeo": {...}, "filas": [{<campo
+  canónico>: <valor>, ...}, ...]}`. Guarda el mapeo igual que
+  `/aprobar-mapeo`, pero publica **exactamente las filas que manda el
+  cliente** (ediciones a mano incluidas), sin volver a derivarlas del
+  servidor — es lo que usa la pantalla de revisión del frontend
+  (`/cargas/:id`) para permitir corregir un valor puntual antes de guardar.
+  Bifurca entre `ProductoPrecio` y `Oferta` según `carga.tipoDatos`.
 - `GET /api/uploads` / `GET /api/uploads/:id` — estado de las cargas,
-  incluyendo `filasExtraidas`/`mapeoSugerido` cuando está en revisión.
+  incluyendo `filasExtraidas`/`mapeoSugerido` cuando está en revisión o
+  esperando confirmación.
+- `GET /api/proveedores` — lista `{id, nombre}` de proveedores existentes,
+  para el autocomplete del formulario de carga (evita crear un proveedor
+  duplicado por un typo en el nombre).
 - `GET /api/stats` — conteo de proveedores/productos/ofertas/cargas.
 
 ## Extracción (`src/extraction/`)
@@ -127,26 +161,48 @@ error claro (`Falta OPENROUTER_API_KEY...`) en vez de romper el proceso.
   usando el plugin `file-parser` de OpenRouter con engine `pdf-text`;
   `image_url` con data URI para png/jpg), le pide un JSON `{headers, rows}`.
   Para PDFs escaneados (imagen pura, sin texto real) conviene cambiar el
-  engine del plugin a `mistral-ocr` en `vision.ts`. **No probado en vivo en
-  este entorno** (no hay `OPENROUTER_API_KEY` configurada acá) — sí
-  typechecked contra el SDK real.
-- `mapping.ts` — reusa `MapeoColumna` si cubre alguna columna detectada;
-  si no, le pide al LLM una sugerencia (columna origen → campo canónico o
-  `null`), que **no se aplica sola**, queda para aprobación humana.
-  `applyMapping` convierte filas crudas al schema canónico, con parseo
-  tolerante de precios (`"$ 1.985,78"` → `1985.78`) y columnas no mapeadas
-  van a `raw_data`.
-- `processCarga.ts` — orquesta todo lo anterior. Si el paso de mapeo falla
-  (ej. sin API key), las filas ya extraídas quedan guardadas en la `Carga`
-  para no tener que re-parsear el archivo en el reintento.
+  engine del plugin a `mistral-ocr` en `vision.ts`. Probado en vivo con
+  imágenes reales de proveedores contra siete modelos distintos de
+  OpenRouter — hay diferencias reales de calidad entre modelos, algunos
+  insertan dígitos de más en códigos de producto o confunden dos productos
+  entre sí, de ahí que la revisión humana antes de publicar sea
+  obligatoria para toda carga.
+- `mapping.ts` — reusa `MapeoColumna` (filtrado por `tipoDatos: "catalogo"`)
+  si cubre alguna columna detectada; si no, le pide al LLM una sugerencia
+  (columna origen → campo canónico o `null`), que **no se aplica sola**,
+  queda para aprobación humana. `applyMapping` convierte filas crudas al
+  schema canónico, con parseo tolerante de precios (`"$ 1.985,78"` →
+  `1985.78`) y columnas no mapeadas van a `raw_data`.
+- `typesOfertas.ts` / `mappingOfertas.ts` / `ofertaMetadata.ts` — paralelos a
+  `types.ts`/`mapping.ts` para el schema de `Oferta` (ver docs/plan-ofertas.md
+  y contexto.md, sección "Schema canónico (ofertas)"): mismo mecanismo de
+  mapeo de columnas reusado/sugerido por LLM (filtrado por
+  `tipoDatos: "oferta"` en `MapeoColumna`), pero además `ofertaMetadata.ts`
+  le pide al LLM que infiera marca/n° de oferta/fecha/hora "de todo el
+  archivo" a partir del nombre de archivo y las filas banner que
+  `excel.ts#extractBannerLines` deja antes del header (para xlsx/xls) o, en
+  la misma llamada de extracción de `vision.ts#extractOfertaWithVision`
+  (para pdf/png/jpg). `applyMappingOfertas` completa marca/numero_oferta/
+  fecha_oferta/hora_oferta con esa metadata solo en las filas donde el
+  campo no vino de una columna mapeada — así funciona tanto un proveedor
+  donde ese dato es una columna real (pasa con `numero_oferta` en BOR&UR)
+  como uno donde solo está en el banner.
+- `processCarga.ts` — orquesta todo lo anterior, bifurcando por
+  `carga.tipoDatos` entre el flujo de catálogo y el de ofertas. Si el paso
+  de mapeo falla (ej. sin API key), las filas ya extraídas (y, para
+  ofertas, la metadata ya detectada) quedan guardadas en la `Carga` para no
+  tener que re-parsear el archivo en el reintento. `Oferta` tiene varios
+  campos `NOT NULL` en el schema (a diferencia de `ProductoPrecio`); antes
+  de publicar se valida que estén completos con un mensaje de error legible
+  (fila + campos faltantes) en vez de dejar que el `INSERT` de Prisma
+  rompa con un error críptico.
 
 ## Pendiente
 
-- UI en el frontend para: disparar el procesamiento de una carga, revisar y
-  editar el mapeo sugerido, aprobar. Hoy todo esto es solo API.
 - Cola/worker en vez de procesar sincrónicamente en el request — para
   archivos grandes o con muchas páginas de PDF, `POST /:id/procesar` puede
-  tardar.
-- Detectar si un archivo es de ofertas (descuentos por SKU) en vez de lista
-  de precios y mapear contra `Oferta` en vez de `ProductoPrecio` — hoy el
-  pipeline de extracción solo publica en `ProductoPrecio`.
+  tardar 1-2 minutos con el usuario esperando.
+- Validación automática antes de publicar (precios negativos/cero, SKU
+  duplicado, saltos de precio anómalos vs. la carga anterior) — hoy la
+  única validación es la revisión humana manual en la pantalla de
+  confirmación.
