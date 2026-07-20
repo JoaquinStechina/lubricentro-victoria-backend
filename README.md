@@ -136,6 +136,8 @@ Matriz de permisos actual:
 |---|---|
 | `GET /api/productos`, `GET /api/ofertas` | `EMPLEADO` (cualquier cuenta activa) |
 | `POST /api/ofertas/cerrar`, `POST /api/ofertas/reactivar` | `ADMINISTRADOR` |
+| `PATCH /api/productos/:id`, `POST /api/productos/editar-lote`, `POST /api/productos/eliminar` | `ADMINISTRADOR` |
+| `PATCH /api/ofertas/:id`, `POST /api/ofertas/editar-lote`, `POST /api/ofertas/eliminar` | `ADMINISTRADOR` |
 | `/api/uploads/*`, `/api/stats`, `/api/proveedores` (todo) | `ADMINISTRADOR` |
 | `/api/usuarios/*` (todo) | `SYSADMIN` |
 
@@ -201,24 +203,57 @@ un usuario que autorice esa primera creación. Se crea con
   para el autocomplete del formulario de carga (evita crear un proveedor
   duplicado por un typo en el nombre).
 - `GET /api/stats` — conteo de proveedores/productos/ofertas/cargas.
-- `GET /api/productos` — catálogo "vigente" (`vigente: true`), opcionalmente
-  filtrado por `?proveedorId=`, paginado (`?page=&pageSize=`, default 100).
-  Aplica `distinct` + `orderBy: createdAt desc` como red de seguridad para
-  los datos cargados antes de que existiera el campo `vigente` (quedaron
-  todos en `true`, no se puede reescribir retroactivamente cuál era "la
-  última" — se autocorrige con la próxima carga de ese proveedor+SKU). El
-  `total` de la respuesta no aplica ese mismo `distinct` (Prisma no lo
-  soporta en `count`), así que puede sobrestimar temporalmente en esos
-  casos. La consume `/cargas/gestion` en el frontend.
-- `GET /api/ofertas` — ofertas activas: `activa: true` y (`fechaHasta` nula
-  o `>= hoy`, comparación de texto ISO). `?proveedorId=` opcional,
-  `?incluirCerradas=true` para ver también las cerradas/vencidas.
+- `GET /api/productos` — catálogo "vigente" (`vigente: true`) y no eliminado
+  (`eliminado: false`), opcionalmente filtrado por `?proveedorId=`, paginado
+  (`?page=&pageSize=`, default 100). Aplica `distinct` + `orderBy: createdAt
+  desc` como red de seguridad para los datos cargados antes de que existiera
+  el campo `vigente` (quedaron todos en `true`, no se puede reescribir
+  retroactivamente cuál era "la última" — se autocorrige con la próxima
+  carga de ese proveedor+SKU). El `total` de la respuesta no aplica ese
+  mismo `distinct` (Prisma no lo soporta en `count`), así que puede
+  sobrestimar temporalmente en esos casos. Admite `?search=` (texto libre,
+  `contains` OR sobre proveedor/marca/sku/descripción/sección/vigencia) y
+  `?f_<columna>=` por columna (`f_proveedor`, `f_marca`, `f_sku` — matchea
+  interno o de proveedor —, `f_descripcion`, `f_seccion`, `f_unidad`,
+  `f_fechaVigencia` con `contains`; `f_precioNeto`, `f_precioConIva`,
+  `f_alicuotaIva` con igualdad exacta). La consume `/cargas/gestion` y la
+  página principal en el frontend.
+- `PATCH /api/productos/:id` — edita una fila del catálogo (`ADMINISTRADOR`).
+  Body: subconjunto de `{marca, skuProveedor, skuInterno, descripcion,
+  seccion, precioNeto, precioConIva, alicuotaIva, moneda, unidad,
+  fechaVigencia}`. 404 si no existe o ya está eliminada.
+- `POST /api/productos/editar-lote` — aplica un mismo valor a varias filas
+  (`ADMINISTRADOR`). Body `{"ids": number[], "field": string, "value":
+  any}`, `field` restringido a `{seccion, precioNeto, precioConIva,
+  alicuotaIva, moneda, unidad, fechaVigencia}` (no incluye campos
+  identificadores como marca/sku/descripción, para no corromper datos al
+  aplicar en lote). Responde `{"actualizados": <count>}`.
+- `POST /api/productos/eliminar` — borrado lógico (`ADMINISTRADOR`). Body
+  `{"ids": number[]}`. Marca `eliminado: true` (la fila sigue en la base,
+  solo deja de aparecer en `GET`). Responde `{"eliminados": <count>}`.
+- `GET /api/ofertas` — ofertas activas: `activa: true`, `eliminado: false` y
+  (`fechaHasta` nula o `>= hoy`, comparación de texto ISO). `?proveedorId=`
+  opcional, `?incluirCerradas=true` para ver también las cerradas/vencidas.
+  Admite los mismos `?search=` y `?f_<columna>=` que `/api/productos`
+  (`f_proveedor`, `f_marca`, `f_sku`, `f_descripcion`, `f_fechaOferta`,
+  `f_horaOferta` con `contains`; `f_numeroOferta`, `f_desdeCantidad`,
+  `f_descuentoPct`, `f_precioUnitario` con igualdad exacta).
 - `POST /api/ofertas/cerrar` / `POST /api/ofertas/reactivar` — body
   `{"proveedorId": <number>, "numeroOferta": <number>, "skuProveedor":
   <string>}`. Cambia `activa` para **todas** las filas que compartan esa
   combinación (todos los tramos de `desde_cantidad` de ese SKU dentro de esa
   oferta) — "se acabó el stock" es un hecho del producto, no de un tramo de
   cantidad puntual.
+- `PATCH /api/ofertas/:id` — edita una fila de oferta (`ADMINISTRADOR`).
+  Body: subconjunto de `{marca, numeroOferta, skuProveedor, descripcion,
+  desdeCantidad, descuentoPct, precioUnitario, moneda, fechaOferta,
+  horaOferta, fechaHasta}`. No toca `activa` (eso es solo `/cerrar` y
+  `/reactivar`). 404 si no existe o ya está eliminada.
+- `POST /api/ofertas/editar-lote` — igual que el de productos, `field`
+  restringido a `{desdeCantidad, descuentoPct, precioUnitario, moneda,
+  fechaOferta, horaOferta, fechaHasta}`.
+- `POST /api/ofertas/eliminar` — borrado lógico, igual shape que el de
+  productos. Independiente de `activa`/`cerrar`/`reactivar`.
 
 ## Extracción (`src/extraction/`)
 

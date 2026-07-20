@@ -75,6 +75,10 @@ model ProductoPrecio {
   // vigente. Filas sin skuProveedor no tienen forma confiable de matchear
   // "el mismo producto" y quedan siempre en true (no se tocan).
   vigente       Boolean  @default(true)
+  // Borrado lógico: true = oculta de GET /api/productos y de la UI. Nunca
+  // se borra la fila físicamente. Independiente de `vigente` (que tiene
+  // otro significado, ver arriba).
+  eliminado     Boolean  @default(false)
   rawData       Json?
   cargaId       Int?
   carga         Carga?   @relation(fields: [cargaId], references: [id])
@@ -110,6 +114,9 @@ model Oferta {
   // Nunca la toca el pipeline de extraccion/mapeo: arranca en true al
   // publicar y solo cambia via POST /api/ofertas/cerrar o /reactivar.
   activa         Boolean  @default(true)
+  // Borrado lógico, independiente de `activa` (que significa "oferta
+  // cerrada/vencida", ver arriba). Nunca se borra la fila físicamente.
+  eliminado      Boolean  @default(false)
   archivoOrigen  String
   rawData        Json?
   cargaId        Int?
