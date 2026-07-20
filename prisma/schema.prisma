@@ -1,14 +1,9 @@
-// Stack: SQLite ahora (prototipo, sin infraestructura extra), MySQL a futuro
-// en producción. Para migrar: cambiar `provider` a "mysql", ajustar
-// DATABASE_URL y correr `prisma migrate dev` de nuevo — el schema en sí
-// no necesita cambios (los tipos usados son compatibles con ambos).
-
 generator client {
   provider = "prisma-client-js"
 }
 
 datasource db {
-  provider = "sqlite"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -60,7 +55,7 @@ model ProductoPrecio {
   marca         String?
   skuProveedor  String?
   skuInterno    String?
-  descripcion   String?
+  descripcion   String?  @db.Text
   seccion       String?
   precioNeto    Float?
   precioConIva  Float?
@@ -98,7 +93,7 @@ model Oferta {
   marca          String
   numeroOferta   Int
   skuProveedor   String
-  descripcion    String
+  descripcion    String   @db.Text
   desdeCantidad  Int
   descuentoPct   Float
   precioUnitario Float
@@ -168,7 +163,7 @@ model Carga {
   // valores. Ninguna carga se publica sola: procesarCarga() nunca llega a
   // "completado" por sí misma, hace falta POST /:id/confirmar.
   estado         String    @default("pendiente")
-  mensajeError   String?
+  mensajeError   String?   @db.Text
   // Filas crudas ya extraídas (headers originales -> valor), antes de
   // aplicar el mapeo de columnas. Se guardan para poder aplicar el mapeo
   // sin tener que re-extraer el archivo tras la revisión humana.

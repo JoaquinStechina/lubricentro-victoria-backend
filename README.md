@@ -10,9 +10,7 @@ persistencia con estado real.
 ## Stack
 
 - **TypeScript** + [Express](https://expressjs.com)
-- **Prisma** como ORM, con **SQLite** ahora (prototipo, sin infraestructura extra,
-  igual que recomienda `contexto.md`) y **MySQL** como base de datos de producción
-  a futuro.
+- **Prisma** como ORM, con **MySQL** como motor de base de datos.
 - **[OpenRouter](https://openrouter.ai)** (vía el SDK oficial de
   [`openai`](https://www.npmjs.com/package/openai), que OpenRouter acepta tal
   cual por ser compatible con su API) para extracción con visión (pdf/png),
@@ -29,30 +27,19 @@ persistencia con estado real.
   CVEs sin parchear; SheetJS solo distribuye las versiones arregladas por su
   cuenta) para parsear xlsx/xls.
 
-### Migrar de SQLite a MySQL
-
-El schema (`prisma/schema.prisma`) usa únicamente tipos compatibles con ambos
-motores. Para pasar a producción:
-
-1. Levantar una instancia MySQL y armar su `DATABASE_URL`
-   (`mysql://user:pass@host:3306/db`).
-2. En `schema.prisma`, cambiar `provider = "sqlite"` por `provider = "mysql"`.
-3. Correr `npm run prisma:migrate` de nuevo para generar la migración
-   equivalente en MySQL.
-
-No hace falta tocar el resto del código (rutas, `db.ts`) — Prisma Client
-abstrae el motor.
-
 ## Setup
 
 ```bash
-cp .env.example .env   # completar OPENROUTER_API_KEY, JWT_SECRET y SYSADMIN_* (ver Autenticación y roles)
+cp .env.example .env   # completar DATABASE_URL, OPENROUTER_API_KEY, JWT_SECRET y SYSADMIN_* (ver Autenticación y roles)
 npm install
-npm run prisma:migrate   # crea dev.db y las tablas
+npm run prisma:migrate   # crea las tablas en la base MySQL de DATABASE_URL
 npm run seed              # importa productos_todos.json / ofertas.json existentes
 npm run seed:sysadmin     # crea la primera cuenta SYSADMIN (lee SYSADMIN_EMAIL/PASSWORD/NOMBRE)
 npm run dev                # http://localhost:4000
 ```
+
+`DATABASE_URL` debe apuntar a una base MySQL existente:
+`mysql://usuario:contraseña@host:3306/nombre_db`.
 
 Sin `OPENROUTER_API_KEY`, todo lo que no necesita IA funciona igual (subir
 archivos, parsear xlsx/xls, aplicar un mapeo ya aprobado). Lo que sí la

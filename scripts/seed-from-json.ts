@@ -1,5 +1,5 @@
 // Importa los productos_todos.json / ofertas.json ya generados (ver
-// contexto.md) a la base SQLite nueva, para no perder el trabajo de
+// contexto.md) a la base nueva, para no perder el trabajo de
 // parseo/normalización ya hecho mientras se migra de JSON estático a
 // una base con estado real. Correr con: npm run seed
 

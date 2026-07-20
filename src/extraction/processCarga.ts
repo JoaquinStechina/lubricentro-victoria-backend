@@ -69,9 +69,10 @@ async function publicarCanonicalRows(
   await prisma.$transaction(
     async (tx) => {
       // Agrupado por marca (no una query por SKU: un archivo puede traer
-      // miles de filas, y SQLite tiene un límite de ~999 parámetros por
-      // statement) — se resuelve con un updateMany por marca, con el set de
-      // SKUs de esa marca en lotes de 500 dentro del `in`.
+      // miles de filas y no queremos una query por fila) — se resuelve con
+      // un updateMany por marca, con el set de SKUs de esa marca en lotes de
+      // 500 dentro del `in` como margen de seguridad frente a límites de
+      // parámetros por statement del motor de base de datos.
       const skusPorMarca = new Map<string | null, Set<string>>();
       for (const r of canonicalRows) {
         if (!r.sku_proveedor) continue;
