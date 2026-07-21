@@ -93,6 +93,12 @@ export async function extractWithVision(
   ];
 }
 
+// El bullet de "fecha_hasta" cambia según sinFechaLimite (ver más abajo):
+// si el usuario ya lo marcó al subir el archivo, le decimos al modelo que
+// no lo busque, en vez de dejar que intente inferirlo del documento.
+const FECHA_HASTA_BULLET_NORMAL = `- "fecha_hasta" es el vencimiento de la oferta, SOLO si el documento da una fecha concreta (ej. "válida durante julio"). Si dice "hasta agotar stock" o no menciona vencimiento, dejalo null — no asumas que no vence, solo que no tiene fecha fija (se cierra manualmente más adelante).`;
+const FECHA_HASTA_BULLET_SIN_LIMITE = `- "fecha_hasta": el usuario ya indicó que esta oferta es "hasta agotar stock" (sin fecha de cierre). Devolvé siempre null para este campo, no lo busques en el documento.`;
+
 const OFERTA_EXTRACTION_PROMPT = `Sos un asistente que extrae tablas de OFERTAS (descuentos por SKU con tramos de cantidad) de proveedores de repuestos automotores, a partir de un documento (PDF o imagen) que puede estar prolijo o desprolijo.
 
 Devolvé ÚNICAMENTE un objeto JSON (sin texto antes ni después, sin markdown) con esta forma exacta:
@@ -103,7 +109,7 @@ Reglas:
 - Incluí TODAS las filas de oferta que encuentres. Un mismo código de producto puede repetirse varias veces con distinto umbral de cantidad/descuento (tramos de descuento por volumen) — son filas válidas, NO las deduplique.
 - Los valores quedan como aparecen en el documento (no los conviertas a número vos).
 - "metadata" son datos que suelen aplicar a TODO el archivo, no ser una columna de la tabla: fijate si hay un renglón banner al principio del documento (ej. "PROVEEDOR S.R.L.  01/07/2026 - 15:00") del que se puedan sacar fecha_oferta/hora_oferta/numero_oferta, y si "marca" se puede inferir del nombre de archivo (te lo paso abajo) o de algún título del documento. Si alguno de estos datos SÍ es una columna de la tabla, dejalo también ahí como columna y podés poner null en metadata para ese campo.
-- "fecha_hasta" es el vencimiento de la oferta, SOLO si el documento da una fecha concreta (ej. "válida durante julio"). Si dice "hasta agotar stock" o no menciona vencimiento, dejalo null — no asumas que no vence, solo que no tiene fecha fija (se cierra manualmente más adelante).
+{{fechaHastaBullet}}
 - Si el documento no tiene ninguna tabla de ofertas reconocible, devolvé {"headers": [], "rows": [], "metadata": {}}.
 
 Nombre de archivo: "{{fileName}}"`;
@@ -111,7 +117,8 @@ Nombre de archivo: "{{fileName}}"`;
 export async function extractOfertaWithVision(
   buffer: Buffer,
   mimeType: "application/pdf" | "image/png" | "image/jpeg",
-  fileName: string
+  fileName: string,
+  sinFechaLimite = false
 ): Promise<{ tables: ExtractedTable[]; metadata: OfertaMetadata }> {
   const client = getOpenRouterClient();
   const base64 = buffer.toString("base64");
@@ -121,16 +128,18 @@ export async function extractOfertaWithVision(
       ? { type: "file", file: { filename: fileName, file_data: `data:application/pdf;base64,${base64}` } }
       : { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64}` } };
 
+  const prompt = OFERTA_EXTRACTION_PROMPT.replace("{{fileName}}", fileName).replace(
+    "{{fechaHastaBullet}}",
+    sinFechaLimite ? FECHA_HASTA_BULLET_SIN_LIMITE : FECHA_HASTA_BULLET_NORMAL
+  );
+
   const requestBody = {
     model: VISION_MODEL,
     max_tokens: 8192,
     messages: [
       {
         role: "user" as const,
-        content: [
-          contentPart,
-          { type: "text" as const, text: OFERTA_EXTRACTION_PROMPT.replace("{{fileName}}", fileName) },
-        ],
+        content: [contentPart, { type: "text" as const, text: prompt }],
       },
     ],
     ...(mimeType === "application/pdf"
@@ -183,7 +192,7 @@ export async function extractOfertaWithVision(
       numero_oferta: asStringOrNull(metadataRaw.numero_oferta),
       fecha_oferta: asStringOrNull(metadataRaw.fecha_oferta),
       hora_oferta: asStringOrNull(metadataRaw.hora_oferta),
-      fecha_hasta: asStringOrNull(metadataRaw.fecha_hasta),
+      fecha_hasta: sinFechaLimite ? null : asStringOrNull(metadataRaw.fecha_hasta),
     },
   };
 }

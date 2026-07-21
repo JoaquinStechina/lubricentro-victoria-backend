@@ -13,9 +13,18 @@ const METADATA_MODEL = process.env.OPENROUTER_MAPPING_MODEL || "anthropic/claude
 // se confía ciegamente en lo que devuelva.
 export async function detectOfertaMetadata(
   fileName: string,
-  bannerLines: string[]
+  bannerLines: string[],
+  sinFechaLimite = false
 ): Promise<OfertaMetadata> {
   const client = getOpenRouterClient();
+
+  // Si el usuario ya marcó "hasta agotar stock" al subir el archivo, no
+  // tiene sentido pedirle al modelo que busque una fecha de vencimiento (le
+  // ahorra tokens y evita que alucine una fecha que no corresponde) — el
+  // resultado se fuerza a null más abajo de todos modos, por las dudas.
+  const fechaHastaInstruccion = sinFechaLimite
+    ? `- "fecha_hasta": el usuario ya indicó que esta oferta es "hasta agotar stock" (sin fecha de cierre). Devolvé siempre null para este campo, no lo busques en el texto.`
+    : `- "fecha_hasta": fecha de vencimiento de la oferta, en formato YYYY-MM-DD, SOLO si el texto da una fecha concreta (ej. "válida durante julio" -> el último día de julio de ese año). Si dice algo como "hasta agotar stock", "hasta fin de stock", o no menciona ningún vencimiento, dejalo en null — null significa que la oferta no tiene fecha de cierre conocida (se cierra manualmente más adelante), no que dure para siempre.`;
 
   const prompt = `Este archivo es una lista de OFERTAS (descuentos por SKU) de un proveedor de repuestos automotores. Nombre de archivo: "${fileName}".
 ${
@@ -29,7 +38,7 @@ Estos 5 datos suelen aplicar a TODO el archivo, no ser una columna de la tabla. 
 - "numero_oferta": el número de oferta del archivo, SOLO si aparece en el texto de arriba (no lo inventes; si no aparece ahí, puede que sea una columna de la tabla, en cuyo caso no hace falta acá — dejalo null).
 - "fecha_oferta": fecha en formato YYYY-MM-DD, si aparece en el texto de arriba.
 - "hora_oferta": hora en formato HH:MM, si aparece en el texto de arriba.
-- "fecha_hasta": fecha de vencimiento de la oferta, en formato YYYY-MM-DD, SOLO si el texto da una fecha concreta (ej. "válida durante julio" -> el último día de julio de ese año). Si dice algo como "hasta agotar stock", "hasta fin de stock", o no menciona ningún vencimiento, dejalo en null — null significa que la oferta no tiene fecha de cierre conocida (se cierra manualmente más adelante), no que dure para siempre.
+${fechaHastaInstruccion}
 
 Devolvé ÚNICAMENTE un objeto JSON (sin texto antes ni después, sin markdown) con esta forma exacta, usando null en lo que no puedas inferir con confianza:
 {"marca": <string o null>, "numero_oferta": <string o null>, "fecha_oferta": <string o null>, "hora_oferta": <string o null>, "fecha_hasta": <string o null>}`;
@@ -59,6 +68,6 @@ Devolvé ÚNICAMENTE un objeto JSON (sin texto antes ni después, sin markdown) 
     numero_oferta: asStringOrNull(parsed.numero_oferta),
     fecha_oferta: asStringOrNull(parsed.fecha_oferta),
     hora_oferta: asStringOrNull(parsed.hora_oferta),
-    fecha_hasta: asStringOrNull(parsed.fecha_hasta),
+    fecha_hasta: sinFechaLimite ? null : asStringOrNull(parsed.fecha_hasta),
   };
 }

@@ -261,7 +261,11 @@ export async function procesarCarga(cargaId: number): Promise<void> {
         }
         ({ headers, rows } = combineTables(tables));
         if (esOferta) {
-          metadata = await detectOfertaMetadata(carga.nombreArchivo, extractBannerLines(buffer));
+          metadata = await detectOfertaMetadata(
+            carga.nombreArchivo,
+            extractBannerLines(buffer),
+            carga.sinFechaLimite
+          );
         }
       } else {
         const mimeType = MIME_BY_TIPO[carga.tipoArchivo];
@@ -269,7 +273,12 @@ export async function procesarCarga(cargaId: number): Promise<void> {
           throw new Error(`Tipo de archivo no soportado para extracción: ${carga.tipoArchivo}`);
         }
         if (esOferta) {
-          const extraido = await extractOfertaWithVision(buffer, mimeType, carga.nombreArchivo);
+          const extraido = await extractOfertaWithVision(
+            buffer,
+            mimeType,
+            carga.nombreArchivo,
+            carga.sinFechaLimite
+          );
           ({ headers, rows } = combineTables(extraido.tables));
           metadata = extraido.metadata;
         } else {

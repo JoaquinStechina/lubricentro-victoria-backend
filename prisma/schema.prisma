@@ -156,6 +156,13 @@ model Carga {
   // "catalogo" | "oferta" — a diferencia de tipoArchivo (formato), esto dice
   // si el archivo se publica en ProductoPrecio o en Oferta.
   tipoDatos      String    @default("catalogo")
+  // Solo aplica a tipoDatos = "oferta": el usuario indicó al subir el
+  // archivo que la oferta no tiene fecha de cierre ("hasta agotar stock"),
+  // así que la IA no intenta inferir metadataOferta.fecha_hasta y esta
+  // queda null (ver detectOfertaMetadata/extractOfertaWithVision). Se
+  // guarda aparte de fecha_hasta=null para poder distinguir "el usuario lo
+  // marcó a propósito" de "la IA no encontró ninguna fecha".
+  sinFechaLimite Boolean   @default(false)
   // pendiente | procesando | revision_pendiente | confirmacion_pendiente |
   // completado | error. revision_pendiente = mapeo sugerido por IA sin
   // aprobar (proveedor nuevo o headers distintos); confirmacion_pendiente =

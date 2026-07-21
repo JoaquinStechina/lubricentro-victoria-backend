@@ -98,6 +98,9 @@ uploadsRouter.post("/", upload.single("file"), async (req, res) => {
   // "catalogo" (default, no rompe cargas existentes) | "oferta" — ver
   // docs/plan-ofertas.md. Cualquier otro valor recibido se ignora.
   const tipoDatos = req.body.tipoDatos === "oferta" ? "oferta" : "catalogo";
+  // Solo tiene sentido para ofertas (ver sinFechaLimite en schema.prisma);
+  // en catálogo se ignora aunque venga en el body.
+  const sinFechaLimite = tipoDatos === "oferta" && req.body.sinFechaLimite === "true";
 
   let proveedorId: number | undefined;
   if (proveedorNombre) {
@@ -116,6 +119,7 @@ uploadsRouter.post("/", upload.single("file"), async (req, res) => {
       rutaArchivo: req.file.path,
       tipoArchivo: EXT_TO_TIPO[ext],
       tipoDatos,
+      sinFechaLimite,
       estado: "pendiente",
     },
   });
