@@ -128,7 +128,7 @@ Matriz de permisos actual:
 
 | Recurso | Rol mínimo |
 |---|---|
-| `GET /api/productos`, `GET /api/ofertas` | `EMPLEADO` (cualquier cuenta activa) |
+| `GET /api/productos`, `GET /api/ofertas` (y sus `/export` y `/secciones`) | `EMPLEADO` (cualquier cuenta activa) |
 | `POST /api/ofertas/cerrar`, `POST /api/ofertas/reactivar` | `ADMINISTRADOR` |
 | `PATCH /api/productos/:id`, `POST /api/productos/editar-lote`, `POST /api/productos/eliminar` | `ADMINISTRADOR` |
 | `PATCH /api/ofertas/:id`, `POST /api/ofertas/editar-lote`, `POST /api/ofertas/eliminar` | `ADMINISTRADOR` |
@@ -228,6 +228,18 @@ un usuario que autorice esa primera creación. Se crea con
 - `GET /api/productos/secciones` — lista de valores distintos de `seccion`
   (vigentes, no eliminados, orden alfabético) para el combobox con búsqueda
   del filtro de Sección en el frontend.
+- `GET /api/productos/export?formato=csv|xlsx` y `GET
+  /api/ofertas/export?formato=csv|xlsx` — descargan el resultado filtrado
+  **completo** (aceptan los mismos `?search=`, `?f_*` y `?sort=&order=` que
+  el GET de la tabla; ignoran `page`/`pageSize`) con el mismo rol que la
+  lectura. Helpers compartidos en `src/routes/exportar.ts`: el CSV usa
+  separador `;` y decimales con coma (Excel con configuración regional
+  es-AR) más BOM UTF-8 para que no rompa acentos; el XLSX se genera con la
+  dependencia `xlsx` ya presente (números tipados, sin tema de locale). El
+  archivo entero se arma en memoria — aceptable al volumen actual, pasar a
+  streaming si crece. El export de ofertas agrega la columna calculada
+  Estado (Activa/Cerrada/Vencida) y muestra "Hasta agotar stock" donde
+  `fechaHasta` es null.
 - `PATCH /api/productos/:id` — edita una fila del catálogo (`ADMINISTRADOR`).
   Body: subconjunto de `{marca, skuProveedor, skuInterno, descripcion,
   seccion, precioNeto, precioConIva, alicuotaIva, moneda, unidad,

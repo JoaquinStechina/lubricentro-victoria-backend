@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { requireRole } from "../middleware/auth.js";
+import { enviarExport, type FilaExport } from "./exportar.js";
 
 export const productosRouter = Router();
 
@@ -123,6 +124,62 @@ export function buildProductosOrderBy(req: {
   if (!sortable) return [{ createdAt: "desc" }];
   return [sortable(order), { createdAt: "desc" }];
 }
+
+// Exporta el resultado filtrado COMPLETO (mismos filtros y orden que GET /,
+// sin paginar) como CSV o XLSX. Mismo rol que la lectura (EMPLEADO): es
+// exactamente la misma data que ya ve en pantalla. El select explícito
+// evita cargar rawData (JSON potencialmente grande) en memoria.
+productosRouter.get("/export", async (req, res) => {
+  const productos = await prisma.productoPrecio.findMany({
+    where: buildProductosWhere(req),
+    distinct: ["proveedorId", "marca", "skuProveedor"],
+    orderBy: buildProductosOrderBy(req),
+    select: {
+      marca: true,
+      skuInterno: true,
+      skuProveedor: true,
+      descripcion: true,
+      seccion: true,
+      precioNeto: true,
+      precioConIva: true,
+      alicuotaIva: true,
+      moneda: true,
+      unidad: true,
+      fechaVigencia: true,
+      proveedor: { select: { nombre: true } },
+    },
+  });
+
+  const headers = [
+    "Proveedor",
+    "Marca",
+    "SKU interno",
+    "SKU proveedor",
+    "Descripción",
+    "Sección",
+    "Precio neto",
+    "Precio c/IVA",
+    "IVA %",
+    "Moneda",
+    "Unidad",
+    "Vigencia",
+  ];
+  const filas: FilaExport[] = productos.map((p) => ({
+    Proveedor: p.proveedor?.nombre ?? null,
+    Marca: p.marca,
+    "SKU interno": p.skuInterno,
+    "SKU proveedor": p.skuProveedor,
+    Descripción: p.descripcion,
+    Sección: p.seccion,
+    "Precio neto": p.precioNeto,
+    "Precio c/IVA": p.precioConIva,
+    "IVA %": p.alicuotaIva,
+    Moneda: p.moneda,
+    Unidad: p.unidad,
+    Vigencia: p.fechaVigencia,
+  }));
+  enviarExport(res, req.query.formato, "catalogo", headers, filas);
+});
 
 // Valores distintos de Sección para el combobox del filtro en el frontend.
 // Registrado antes de las rutas /:id (GET no colisiona con PATCH /:id, pero

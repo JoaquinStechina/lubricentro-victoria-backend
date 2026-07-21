@@ -2,6 +2,7 @@ import { Router } from "express";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { requireRole } from "../middleware/auth.js";
+import { enviarExport, type FilaExport } from "./exportar.js";
 
 export const ofertasRouter = Router();
 
@@ -139,6 +140,63 @@ ofertasRouter.get("/", async (req, res) => {
     include: { proveedor: true },
   });
   res.json({ ofertas });
+});
+
+// Exporta el resultado filtrado completo (mismos filtros y orden que GET /)
+// como CSV o XLSX. Mismo rol que la lectura (EMPLEADO).
+ofertasRouter.get("/export", async (req, res) => {
+  const ofertas = await prisma.oferta.findMany({
+    where: buildOfertasWhere(req),
+    orderBy: buildOfertasOrderBy(req),
+    select: {
+      marca: true,
+      numeroOferta: true,
+      skuProveedor: true,
+      descripcion: true,
+      desdeCantidad: true,
+      descuentoPct: true,
+      precioUnitario: true,
+      moneda: true,
+      fechaOferta: true,
+      horaOferta: true,
+      fechaHasta: true,
+      activa: true,
+      proveedor: { select: { nombre: true } },
+    },
+  });
+
+  const hoy = hoyLocalISO();
+  const headers = [
+    "Proveedor",
+    "Marca",
+    "N° oferta",
+    "SKU proveedor",
+    "Descripción",
+    "Desde cantidad",
+    "Descuento %",
+    "Precio unitario",
+    "Moneda",
+    "Fecha oferta",
+    "Hora oferta",
+    "Válida hasta",
+    "Estado",
+  ];
+  const filas: FilaExport[] = ofertas.map((o) => ({
+    Proveedor: o.proveedor?.nombre ?? null,
+    Marca: o.marca,
+    "N° oferta": o.numeroOferta,
+    "SKU proveedor": o.skuProveedor,
+    Descripción: o.descripcion,
+    "Desde cantidad": o.desdeCantidad,
+    "Descuento %": o.descuentoPct,
+    "Precio unitario": o.precioUnitario,
+    Moneda: o.moneda,
+    "Fecha oferta": o.fechaOferta,
+    "Hora oferta": o.horaOferta,
+    "Válida hasta": o.fechaHasta ?? "Hasta agotar stock",
+    Estado: !o.activa ? "Cerrada" : o.fechaHasta && o.fechaHasta < hoy ? "Vencida" : "Activa",
+  }));
+  enviarExport(res, req.query.formato, "ofertas", headers, filas);
 });
 
 type CerrarBody = { proveedorId?: unknown; numeroOferta?: unknown; skuProveedor?: unknown };
