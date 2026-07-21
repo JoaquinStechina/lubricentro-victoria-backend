@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { requireRole } from "../middleware/auth.js";
 import { enviarExport, type FilaExport } from "./exportar.js";
+import { imagenUploadSingle, imagenPublicUrl, eliminarArchivoImagen } from "../lib/imagenes.js";
 
 export const ofertasRouter = Router();
 
@@ -156,12 +157,26 @@ export function buildOfertasOrderBy(req: {
 // — evita necesitar un cron/worker que cierre solas las que ya vencieron.
 // null en fechaHasta = "hasta agotar stock", solo se cierra a mano.
 ofertasRouter.get("/", async (req, res) => {
-  const ofertas = await prisma.oferta.findMany({
-    where: buildOfertasWhere(req),
-    orderBy: buildOfertasOrderBy(req),
-    include: { proveedor: true },
-  });
-  res.json({ ofertas });
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(500, Math.max(1, Number(req.query.pageSize) || 100));
+  const where = buildOfertasWhere(req);
+  const orderBy = buildOfertasOrderBy(req);
+
+  // A diferencia de Productos, Oferta no tiene concepto de "vigente"/
+  // distinct por identidad — cada tramo/oferta convive naturalmente, así que
+  // el count es exacto sin las salvedades que aplican en productos.ts.
+  const [total, items] = await Promise.all([
+    prisma.oferta.count({ where }),
+    prisma.oferta.findMany({
+      where,
+      orderBy,
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: { proveedor: true },
+    }),
+  ]);
+
+  res.json({ items, total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) });
 });
 
 // Exporta el resultado filtrado completo (mismos filtros y orden que GET /)
@@ -358,6 +373,105 @@ function buildSingleEditData(body: unknown): Record<string, unknown> | null {
   return data;
 }
 
+// Mismos 7 campos que OFERTA_REQUIRED_FIELDS en extraction/processCarga.ts,
+// pero con los nombres camelCase que usa este router (esa lista está en
+// snake_case, son los nombres canónicos del pipeline de extracción) — si se
+// agrega/saca un campo obligatorio de Oferta en el schema, actualizar ambas.
+const CAMPOS_OBLIGATORIOS_ALTA = [
+  "marca",
+  "numeroOferta",
+  "skuProveedor",
+  "descripcion",
+  "precioUnitario",
+  "fechaOferta",
+  "horaOferta",
+] as const;
+
+async function resolverProveedor(body: {
+  proveedorId?: unknown;
+  proveedorNombre?: unknown;
+}): Promise<number | null> {
+  if (body.proveedorId != null) {
+    const id = Number(body.proveedorId);
+    if (!Number.isFinite(id)) return null;
+    const proveedor = await prisma.proveedor.findUnique({ where: { id } });
+    return proveedor ? proveedor.id : null;
+  }
+  const nombre = typeof body.proveedorNombre === "string" ? body.proveedorNombre.trim() : "";
+  if (!nombre) return null;
+  const proveedor = await prisma.proveedor.upsert({
+    where: { nombre },
+    update: {},
+    create: { nombre },
+  });
+  return proveedor.id;
+}
+
+// Alta manual de una oferta suelta, en paralelo al pipeline de carga masiva
+// de archivos. desdeCantidad/descuentoPct usan el mismo default (1 y 0) que
+// normalizeOfertaRow aplica a filas de archivo con esos campos vacíos, para
+// que una oferta cargada a mano y una extraída de un Excel tengan la misma
+// semántica.
+ofertasRouter.post("/", requireRole("ADMINISTRADOR"), async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const proveedorId = await resolverProveedor(body);
+  if (!proveedorId) {
+    res.status(400).json({ error: "Falta proveedorId (existente) o proveedorNombre." });
+    return;
+  }
+
+  const faltantes = CAMPOS_OBLIGATORIOS_ALTA.filter((campo) => {
+    const v = body[campo];
+    return v === undefined || v === null || v === "";
+  });
+  if (faltantes.length > 0) {
+    res.status(400).json({ error: `Faltan campos obligatorios: ${faltantes.join(", ")}.` });
+    return;
+  }
+
+  const desdeCantidad = body.desdeCantidad === undefined || body.desdeCantidad === ""
+    ? 1
+    : Number(body.desdeCantidad);
+  const descuentoPct = body.descuentoPct === undefined || body.descuentoPct === ""
+    ? 0
+    : Number(body.descuentoPct);
+  const precioUnitario = Number(body.precioUnitario);
+  const numeroOferta = Number(body.numeroOferta);
+  if (![desdeCantidad, descuentoPct, precioUnitario, numeroOferta].every(Number.isFinite)) {
+    res.status(400).json({ error: "desdeCantidad, descuentoPct, precioUnitario y numeroOferta deben ser numéricos." });
+    return;
+  }
+
+  try {
+    const oferta = await prisma.oferta.create({
+      data: {
+        proveedorId,
+        marca: String(body.marca),
+        numeroOferta,
+        skuProveedor: String(body.skuProveedor),
+        descripcion: String(body.descripcion),
+        desdeCantidad,
+        descuentoPct,
+        precioUnitario,
+        moneda: typeof body.moneda === "string" && body.moneda ? body.moneda : "ARS",
+        fechaOferta: String(body.fechaOferta),
+        horaOferta: String(body.horaOferta),
+        fechaHasta: typeof body.fechaHasta === "string" && body.fechaHasta ? body.fechaHasta : null,
+        archivoOrigen: "Alta manual",
+        cargaId: null,
+        rawData: undefined,
+      } as Prisma.OfertaUncheckedCreateInput,
+      include: { proveedor: true },
+    });
+    res.status(201).json(oferta);
+  } catch (err) {
+    // Nunca dejar que un error de Prisma llegue como rechazo no manejado:
+    // Express 4 no atrapa promesas de handlers async por su cuenta, y un
+    // rejection sin catch tira abajo todo el proceso.
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 ofertasRouter.post("/editar-lote", requireRole("ADMINISTRADOR"), async (req, res) => {
   const b = (req.body ?? {}) as { ids?: unknown; field?: unknown; value?: unknown };
   const ids = Array.isArray(b.ids) ? b.ids.filter((v) => Number.isFinite(Number(v))).map(Number) : [];
@@ -427,4 +541,56 @@ ofertasRouter.patch("/:id", requireRole("ADMINISTRADOR"), async (req, res) => {
     include: { proveedor: true },
   });
   res.json(oferta);
+});
+
+// Sube/reemplaza la foto de una oferta — mismo criterio que el endpoint
+// espejo en productos.ts (endpoint aparte del PATCH genérico porque
+// imagenUrl es gestionado por el servidor, no tipeado por el usuario).
+ofertasRouter.post(
+  "/:id/imagen",
+  requireRole("ADMINISTRADOR"),
+  imagenUploadSingle,
+  async (req, res) => {
+    if (!req.file) {
+      res.status(400).json({ error: "Falta el archivo (campo 'imagen')." });
+      return;
+    }
+    try {
+      const id = Number(req.params.id);
+      const objetivo = await prisma.oferta.findUnique({ where: { id } });
+      if (!objetivo || objetivo.eliminado) {
+        res.status(404).json({ error: "Oferta no encontrada" });
+        return;
+      }
+      await eliminarArchivoImagen(objetivo.imagenUrl);
+      const oferta = await prisma.oferta.update({
+        where: { id },
+        data: { imagenUrl: imagenPublicUrl(req.file.filename) },
+        include: { proveedor: true },
+      });
+      res.json(oferta);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+);
+
+ofertasRouter.delete("/:id/imagen", requireRole("ADMINISTRADOR"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const objetivo = await prisma.oferta.findUnique({ where: { id } });
+    if (!objetivo || objetivo.eliminado) {
+      res.status(404).json({ error: "Oferta no encontrada" });
+      return;
+    }
+    await eliminarArchivoImagen(objetivo.imagenUrl);
+    const oferta = await prisma.oferta.update({
+      where: { id },
+      data: { imagenUrl: null },
+      include: { proveedor: true },
+    });
+    res.json(oferta);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });

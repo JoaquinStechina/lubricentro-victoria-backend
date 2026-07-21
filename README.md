@@ -130,8 +130,8 @@ Matriz de permisos actual:
 |---|---|
 | `GET /api/productos`, `GET /api/ofertas` (y sus `/export` y `/secciones`) | `EMPLEADO` (cualquier cuenta activa) |
 | `POST /api/ofertas/cerrar`, `POST /api/ofertas/reactivar` | `ADMINISTRADOR` |
-| `PATCH /api/productos/:id`, `POST /api/productos/editar-lote`, `POST /api/productos/eliminar`, `POST /api/productos/restaurar` | `ADMINISTRADOR` |
-| `PATCH /api/ofertas/:id`, `POST /api/ofertas/editar-lote`, `POST /api/ofertas/eliminar`, `POST /api/ofertas/restaurar` | `ADMINISTRADOR` |
+| `PATCH /api/productos/:id`, `POST /api/productos/editar-lote`, `POST /api/productos/eliminar`, `POST /api/productos/restaurar`, `POST /api/productos` (alta manual), `POST`/`DELETE /api/productos/:id/imagen` | `ADMINISTRADOR` |
+| `PATCH /api/ofertas/:id`, `POST /api/ofertas/editar-lote`, `POST /api/ofertas/eliminar`, `POST /api/ofertas/restaurar`, `POST /api/ofertas` (alta manual), `POST`/`DELETE /api/ofertas/:id/imagen` | `ADMINISTRADOR` |
 | `?incluirEliminados=true` en los `GET` (vista papelera) | `ADMINISTRADOR` (un `EMPLEADO` que mande el flag lo tiene ignorado) |
 | `/api/uploads/*`, `/api/stats`, `/api/proveedores` (todo) | `ADMINISTRADOR` |
 | `/api/usuarios/*` (todo) | `SYSADMIN` |
@@ -275,8 +275,13 @@ un usuario que autorice esa primera creación. Se crea con
   productos sin el `distinct` (una eliminada que comparte
   proveedor+marca+SKU con otra fila quedaría oculta).
 - `GET /api/ofertas` — ofertas activas: `activa: true`, `eliminado: false` y
-  (`fechaHasta` nula o `>= hoy`, comparación de texto ISO). `?proveedorId=`
-  opcional, `?incluirCerradas=true` para ver también las cerradas/vencidas.
+  (`fechaHasta` nula o `>= hoy`, comparación de texto ISO). Paginado
+  (`?page=&pageSize=`, default 100, máx 500, misma forma de respuesta
+  `{items, total, page, pageSize, totalPages}` que `/api/productos` — a
+  diferencia de ese, acá el `total` es siempre exacto: Oferta no tiene
+  concepto de `vigente`/`distinct` por identidad, cada tramo convive sin
+  dedupe). `?proveedorId=` opcional, `?incluirCerradas=true` para ver también
+  las cerradas/vencidas.
   Admite los mismos `?search=` y `?f_<columna>=` que `/api/productos`
   (`f_proveedor`, `f_marca`, `f_sku`, `f_descripcion`, `f_fechaOferta`,
   `f_horaOferta` con `contains`; `f_numeroOferta`, `f_desdeCantidad` con
@@ -309,6 +314,36 @@ un usuario que autorice esa primera creación. Se crea con
   fechaOferta, horaOferta, fechaHasta}`.
 - `POST /api/ofertas/eliminar` — borrado lógico, igual shape que el de
   productos. Independiente de `activa`/`cerrar`/`reactivar`.
+- `POST /api/productos` / `POST /api/ofertas` — alta manual de una fila
+  suelta (`ADMINISTRADOR`), en paralelo al pipeline de carga masiva de
+  archivos (`/api/uploads`). Body JSON: `{proveedorId}` (proveedor existente)
+  o `{proveedorNombre}` (crea el proveedor si no existe, mismo `upsert` que
+  usa `POST /api/uploads`) más el resto de los campos editables de cada
+  tabla. En Ofertas son obligatorios `marca, numeroOferta, skuProveedor,
+  descripcion, precioUnitario, fechaOferta, horaOferta` (400 si falta
+  alguno); `desdeCantidad`/`descuentoPct` toman default `1`/`0` si vienen
+  vacíos (misma normalización que las filas extraídas de un archivo) y
+  `archivoOrigen` queda en el valor fijo `"Alta manual"`. En Productos, si
+  se informa `skuProveedor`, la fila nueva pasa a ser la `vigente` de esa
+  identidad proveedor+marca+SKU (la anterior pasa a `vigente: false`, mismo
+  mecanismo que al confirmar una carga). Ambos devuelven la fila creada con
+  `cargaId: null` y status 201.
+- `POST /api/productos/:id/imagen` / `POST /api/ofertas/:id/imagen` — sube o
+  reemplaza la foto de una fila (`ADMINISTRADOR`, `multipart/form-data` con
+  el archivo en el campo `imagen`). Acepta JPG/PNG/WEBP hasta 5MB (400 si no
+  matchea extensión+mimetype o excede el límite). Si la fila ya tenía una
+  imagen, borra el archivo viejo del disco antes de guardar el nuevo (no deja
+  huérfanos). Guarda en `uploads/imagenes/` con nombre
+  `<timestamp>_<random><ext>` y expone la ruta pública en `imagenUrl`
+  (`/uploads/imagenes/<archivo>`, servida sin autenticación por
+  `express.static` en `server.ts` — son assets no sensibles, a diferencia de
+  los archivos de carga originales en `uploads/`). `DELETE
+  /api/productos/:id/imagen` / `DELETE /api/ofertas/:id/imagen` — quita la
+  imagen (borra el archivo y pone `imagenUrl: null`). Deliberadamente fuera
+  de `PATCH /:id`/`editar-lote`: es un nombre de archivo gestionado por el
+  servidor, no un valor que el usuario tipea. El borrado lógico de la fila
+  (`/eliminar`) no toca el archivo de imagen (es reversible vía
+  `/restaurar`); solo se borra al reemplazar o quitar explícitamente.
 
 ## Extracción (`src/extraction/`)
 

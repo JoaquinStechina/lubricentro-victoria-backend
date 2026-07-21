@@ -10,6 +10,7 @@ import { ofertasRouter } from "./routes/ofertas.js";
 import { authRouter } from "./routes/auth.js";
 import { usuariosRouter } from "./routes/usuarios.js";
 import { requireAuth } from "./middleware/auth.js";
+import { IMAGENES_DIR } from "./lib/imagenes.js";
 
 const app = express();
 // credentials: true + origin explícito (no "*") son necesarios para que el
@@ -24,6 +25,11 @@ app.use(express.json({ limit: "50mb" }));
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });
 });
+
+// Fotos de producto/oferta: assets no sensibles, servidos sin requireAuth (a
+// diferencia de los archivos de carga originales en uploads/, que nunca se
+// sirven estáticamente).
+app.use("/uploads/imagenes", express.static(IMAGENES_DIR));
 
 app.use("/api/auth", authRouter);
 

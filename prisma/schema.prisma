@@ -63,6 +63,7 @@ model ProductoPrecio {
   moneda        String   @default("ARS")
   unidad        String?
   fechaVigencia String?
+  imagenUrl     String?
   // true = la fila mas reciente conocida para este proveedor+marca+SKU.
   // Al confirmar una carga nueva, la fila anterior de ese mismo
   // proveedor+marca+SKU se marca en false (ver publicarCanonicalRows en
@@ -106,6 +107,7 @@ model Oferta {
   // sin fecha fija ("hasta agotar stock"): se cierra solo con la accion
   // manual de POST /api/ofertas/cerrar, nunca con un job automatico.
   fechaHasta     String?
+  imagenUrl      String?
   // Nunca la toca el pipeline de extraccion/mapeo: arranca en true al
   // publicar y solo cambia via POST /api/ofertas/cerrar o /reactivar.
   activa         Boolean  @default(true)

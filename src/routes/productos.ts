@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { requireRole } from "../middleware/auth.js";
 import { enviarExport, type FilaExport } from "./exportar.js";
+import { imagenUploadSingle, imagenPublicUrl, eliminarArchivoImagen } from "../lib/imagenes.js";
 
 export const productosRouter = Router();
 
@@ -294,6 +295,90 @@ function buildSingleEditData(body: unknown): Record<string, unknown> | null {
   return data;
 }
 
+// A diferencia de buildSingleEditData (PATCH parcial: los campos ausentes no
+// se tocan), acá es un INSERT: los campos ausentes van explícitamente a null
+// — excepto `moneda`, que en el schema es NOT NULL con default "ARS"
+// (todos los demás campos de SINGLE_EDIT_FIELDS son nullable): pisarlo con
+// null rompería el INSERT, así que ahí el ausente cae al default en vez de a
+// null.
+function buildCreateData(body: unknown): Record<string, unknown> | null {
+  const b = (body ?? {}) as Record<string, unknown>;
+  const data: Record<string, unknown> = {};
+  for (const campo of SINGLE_EDIT_FIELDS) {
+    const valorCrudo = campo === "moneda" ? (b[campo] ?? "ARS") : (b[campo] ?? null);
+    const coerced = coerceValor(campo, valorCrudo);
+    if (!coerced.ok) return null;
+    data[campo] = coerced.value;
+  }
+  return data;
+}
+
+// Resuelve el proveedor de un alta manual: por id existente, o por nombre
+// (upsert, mismo bloque que ya usa uploadsRouter.post("/") en uploads.ts al
+// recibir un archivo nuevo). Devuelve null si no se pudo resolver ninguno.
+async function resolverProveedor(body: {
+  proveedorId?: unknown;
+  proveedorNombre?: unknown;
+}): Promise<number | null> {
+  if (body.proveedorId != null) {
+    const id = Number(body.proveedorId);
+    if (!Number.isFinite(id)) return null;
+    const proveedor = await prisma.proveedor.findUnique({ where: { id } });
+    return proveedor ? proveedor.id : null;
+  }
+  const nombre = typeof body.proveedorNombre === "string" ? body.proveedorNombre.trim() : "";
+  if (!nombre) return null;
+  const proveedor = await prisma.proveedor.upsert({
+    where: { nombre },
+    update: {},
+    create: { nombre },
+  });
+  return proveedor.id;
+}
+
+// Alta manual de un producto suelto, en paralelo al pipeline de carga masiva
+// de archivos (/api/uploads). Body: {proveedorId|proveedorNombre, ...campos
+// de SINGLE_EDIT_FIELDS}.
+productosRouter.post("/", requireRole("ADMINISTRADOR"), async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const proveedorId = await resolverProveedor(body);
+  if (!proveedorId) {
+    res.status(400).json({ error: "Falta proveedorId (existente) o proveedorNombre." });
+    return;
+  }
+
+  const data = buildCreateData(body);
+  if (!data) {
+    res.status(400).json({ error: `Body inválido. Campos permitidos: ${SINGLE_EDIT_FIELDS.join(", ")}` });
+    return;
+  }
+
+  const skuProveedor = typeof data.skuProveedor === "string" ? data.skuProveedor : null;
+  const marca = typeof data.marca === "string" ? data.marca : null;
+  try {
+    if (skuProveedor) {
+      // La fila nueva pasa a ser "la vigente" de esa identidad proveedor+marca+
+      // SKU (mismo criterio de una línea que publicarCanonicalRows en
+      // processCarga.ts), para no convivir duplicada con una carga previa.
+      await prisma.productoPrecio.updateMany({
+        where: { proveedorId, marca, skuProveedor, vigente: true },
+        data: { vigente: false },
+      });
+    }
+
+    const producto = await prisma.productoPrecio.create({
+      data: { proveedorId, ...data, cargaId: null } as Prisma.ProductoPrecioUncheckedCreateInput,
+      include: { proveedor: true },
+    });
+    res.status(201).json(producto);
+  } catch (err) {
+    // Nunca dejar que un error de Prisma (ej. constraint) llegue como
+    // rechazo no manejado: Express 4 no atrapa promesas de handlers async
+    // por su cuenta, y un rejection sin catch tira abajo todo el proceso.
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
+});
+
 // Historial de precios de un SKU: todas las filas (vigentes o no,
 // eliminadas incluidas — el historial son justamente las superadas) que
 // comparten la identidad proveedor+marca+skuProveedor de la fila pedida,
@@ -401,4 +486,57 @@ productosRouter.patch("/:id", requireRole("ADMINISTRADOR"), async (req, res) => 
     include: { proveedor: true },
   });
   res.json(producto);
+});
+
+// Sube/reemplaza la foto de un producto. Endpoint aparte del PATCH genérico
+// a propósito: imagenUrl es un nombre de archivo gestionado por el servidor
+// (via multer), no un valor que el usuario tipea, y reemplazarla implica
+// borrar el archivo físico viejo (ver eliminarArchivoImagen).
+productosRouter.post(
+  "/:id/imagen",
+  requireRole("ADMINISTRADOR"),
+  imagenUploadSingle,
+  async (req, res) => {
+    if (!req.file) {
+      res.status(400).json({ error: "Falta el archivo (campo 'imagen')." });
+      return;
+    }
+    try {
+      const id = Number(req.params.id);
+      const objetivo = await prisma.productoPrecio.findUnique({ where: { id } });
+      if (!objetivo || objetivo.eliminado) {
+        res.status(404).json({ error: "Producto no encontrado" });
+        return;
+      }
+      await eliminarArchivoImagen(objetivo.imagenUrl);
+      const producto = await prisma.productoPrecio.update({
+        where: { id },
+        data: { imagenUrl: imagenPublicUrl(req.file.filename) },
+        include: { proveedor: true },
+      });
+      res.json(producto);
+    } catch (err) {
+      res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    }
+  }
+);
+
+productosRouter.delete("/:id/imagen", requireRole("ADMINISTRADOR"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const objetivo = await prisma.productoPrecio.findUnique({ where: { id } });
+    if (!objetivo || objetivo.eliminado) {
+      res.status(404).json({ error: "Producto no encontrado" });
+      return;
+    }
+    await eliminarArchivoImagen(objetivo.imagenUrl);
+    const producto = await prisma.productoPrecio.update({
+      where: { id },
+      data: { imagenUrl: null },
+      include: { proveedor: true },
+    });
+    res.json(producto);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+  }
 });
