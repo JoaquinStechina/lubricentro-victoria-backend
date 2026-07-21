@@ -294,6 +294,39 @@ function buildSingleEditData(body: unknown): Record<string, unknown> | null {
   return data;
 }
 
+// Historial de precios de un SKU: todas las filas (vigentes o no,
+// eliminadas incluidas — el historial son justamente las superadas) que
+// comparten la identidad proveedor+marca+skuProveedor de la fila pedida,
+// en orden cronológico de carga. Si la fila no tiene skuProveedor no hay
+// identidad confiable para agrupar (mismo criterio que publicarCanonicalRows)
+// y se devuelve solo esa fila.
+productosRouter.get("/:id/historial", async (req, res) => {
+  const id = Number(req.params.id);
+  const base = await prisma.productoPrecio.findUnique({ where: { id } });
+  if (!base) {
+    res.status(404).json({ error: "Producto no encontrado" });
+    return;
+  }
+  const items = await prisma.productoPrecio.findMany({
+    where: base.skuProveedor
+      ? { proveedorId: base.proveedorId, marca: base.marca, skuProveedor: base.skuProveedor }
+      : { id },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      precioNeto: true,
+      precioConIva: true,
+      alicuotaIva: true,
+      fechaVigencia: true,
+      vigente: true,
+      eliminado: true,
+      createdAt: true,
+      carga: { select: { nombreArchivo: true } },
+    },
+  });
+  res.json({ items });
+});
+
 // IMPORTANTE: /editar-lote y /eliminar van ANTES de /:id — si no, Express
 // intentaría matchear "editar-lote"/"eliminar" como si fueran un :id (pero
 // como son rutas con método/verbo distinto de PATCH /:id no colisionan en

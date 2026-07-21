@@ -254,6 +254,17 @@ un usuario que autorice esa primera creación. Se crea con
 - `POST /api/productos/eliminar` — borrado lógico (`ADMINISTRADOR`). Body
   `{"ids": number[]}`. Marca `eliminado: true` (la fila sigue en la base,
   solo deja de aparecer en `GET`). Responde `{"eliminados": <count>}`.
+- `GET /api/productos/:id/historial` — historial de precios del SKU de esa
+  fila: todas las filas (vigentes o no, eliminadas incluidas — el historial
+  son justamente las superadas) que comparten proveedor+marca+skuProveedor,
+  en orden cronológico de carga, con `carga.nombreArchivo`. Si la fila no
+  tiene `skuProveedor` no hay identidad confiable para agrupar (mismo
+  criterio que `publicarCanonicalRows`) y devuelve solo esa fila. 404 si el
+  id no existe. Mismo rol que la lectura.
+- `GET /api/ofertas/:id/historial` — ídem para un tramo de oferta: filas del
+  mismo proveedor+skuProveedor+desdeCantidad a través de las cargas (nunca
+  mezcla tramos: el precio baja a propósito con más cantidad, compararlos
+  daría saltos falsos — mismo criterio que las advertencias).
 - `POST /api/productos/restaurar` / `POST /api/ofertas/restaurar` — espejo
   de `/eliminar` (`ADMINISTRADOR`): mismo body, marca `eliminado: false` y
   responde `{"restaurados": <count>}`. Es la salida de la "papelera": los

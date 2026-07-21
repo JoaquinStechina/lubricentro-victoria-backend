@@ -221,6 +221,41 @@ ofertasRouter.get("/export", async (req, res) => {
   enviarExport(res, req.query.formato, "ofertas", headers, filas);
 });
 
+// Historial de un tramo de oferta: todas las filas (activas, cerradas,
+// vencidas o eliminadas) del mismo proveedor+SKU+desde_cantidad a través
+// de las cargas — comparar tramos distintos daría saltos falsos, el precio
+// baja a propósito con más cantidad (mismo criterio que las advertencias).
+ofertasRouter.get("/:id/historial", async (req, res) => {
+  const id = Number(req.params.id);
+  const base = await prisma.oferta.findUnique({ where: { id } });
+  if (!base) {
+    res.status(404).json({ error: "Oferta no encontrada" });
+    return;
+  }
+  const items = await prisma.oferta.findMany({
+    where: {
+      proveedorId: base.proveedorId,
+      skuProveedor: base.skuProveedor,
+      desdeCantidad: base.desdeCantidad,
+    },
+    orderBy: { createdAt: "asc" },
+    select: {
+      id: true,
+      numeroOferta: true,
+      descuentoPct: true,
+      precioUnitario: true,
+      moneda: true,
+      fechaOferta: true,
+      fechaHasta: true,
+      activa: true,
+      eliminado: true,
+      archivoOrigen: true,
+      createdAt: true,
+    },
+  });
+  res.json({ items });
+});
+
 type CerrarBody = { proveedorId?: unknown; numeroOferta?: unknown; skuProveedor?: unknown };
 
 function parseCerrarBody(body: unknown): { proveedorId: number; numeroOferta: number; skuProveedor: string } | null {
