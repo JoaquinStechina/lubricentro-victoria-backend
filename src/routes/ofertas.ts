@@ -41,6 +41,20 @@ ofertasRouter.get("/", async (req, res) => {
     const num = Number(raw);
     if (Number.isFinite(num)) filtros.push({ [campo]: num } as Prisma.OfertaWhereInput);
   }
+  // "sin_fecha"/"con_fecha": fechaHasta null (hasta agotar stock) no se puede
+  // filtrar con un "contains" de texto como las demás columnas.
+  const rawVigencia = req.query.f_vigencia;
+  if (rawVigencia === "sin_fecha") {
+    filtros.push({ fechaHasta: null });
+  } else if (rawVigencia === "con_fecha") {
+    filtros.push({ fechaHasta: { not: null } });
+  }
+  // Fecha de vencimiento puntual: igualdad exacta (viene de un date picker
+  // en formato YYYY-MM-DD, el mismo en que se guarda fechaHasta).
+  const rawFechaHasta = req.query.f_fechaHasta;
+  if (typeof rawFechaHasta === "string" && rawFechaHasta.trim()) {
+    filtros.push({ fechaHasta: rawFechaHasta.trim() });
+  }
   if (search) {
     filtros.push({
       OR: [

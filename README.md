@@ -233,7 +233,12 @@ un usuario que autorice esa primera creación. Se crea con
   Admite los mismos `?search=` y `?f_<columna>=` que `/api/productos`
   (`f_proveedor`, `f_marca`, `f_sku`, `f_descripcion`, `f_fechaOferta`,
   `f_horaOferta` con `contains`; `f_numeroOferta`, `f_desdeCantidad`,
-  `f_descuentoPct`, `f_precioUnitario` con igualdad exacta).
+  `f_descuentoPct`, `f_precioUnitario` con igualdad exacta). Además,
+  `f_vigencia=sin_fecha|con_fecha` filtra por `fechaHasta` nula ("hasta
+  agotar stock") o no nula — es un filtro categórico aparte porque `null` no
+  se puede buscar con `contains` — y `f_fechaHasta=YYYY-MM-DD` filtra por
+  fecha de vencimiento exacta (viene del date picker del frontend, mismo
+  formato en que se guarda `fechaHasta`).
 - `POST /api/ofertas/cerrar` / `POST /api/ofertas/reactivar` — body
   `{"proveedorId": <number>, "numeroOferta": <number>, "skuProveedor":
   <string>}`. Cambia `activa` para **todas** las filas que compartan esa
@@ -336,6 +341,11 @@ un usuario que autorice esa primera creación. Se crea con
   faltantes (`OFERTA_REQUIRED_FIELDS`, exportado desde `processCarga.ts` y
   reusado acá — misma lista que se valida como error duro recién al
   confirmar, pero mostrada antes como advertencia temprana).
+  `desde_cantidad` y `descuento_pct` no están en esa lista: si vienen
+  vacíos, `normalizeOfertaRow` (`mappingOfertas.ts`) les infiere un default
+  ("aplica desde la primera unidad, sin descuento": `1` y `0`
+  respectivamente), así que nunca llegan `null` ni a la advertencia ni a la
+  validación de publicar.
 - `typesOfertas.ts` / `mappingOfertas.ts` / `ofertaMetadata.ts` — paralelos a
   `types.ts`/`mapping.ts` para el schema de `Oferta` (ver docs/plan-ofertas.md
   y contexto.md, sección "Schema canónico (ofertas)"): mismo mecanismo de

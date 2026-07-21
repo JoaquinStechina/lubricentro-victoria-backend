@@ -117,6 +117,9 @@ function toIntOrNull(value: unknown): number | null {
 // normalizeCanonicalRow) a partir de un objeto parcial con los campos
 // canónicos de oferta. Puede quedar con nulls en campos obligatorios del
 // schema — eso se valida recién al confirmar (ver processCarga.ts).
+// desde_cantidad y descuento_pct son la excepción: si vienen vacíos se
+// infiere "aplica desde la primera unidad, sin descuento" (1 y 0
+// respectivamente) en vez de exigir que el usuario los tipee a mano.
 export function normalizeOfertaRow(
   input: Partial<Record<OfertaField, unknown>> & { raw_data?: unknown }
 ): OfertaRowNormalized {
@@ -130,8 +133,8 @@ export function normalizeOfertaRow(
     numero_oferta: toIntOrNull(input.numero_oferta),
     sku_proveedor: toStringOrNull(input.sku_proveedor),
     descripcion: toStringOrNull(input.descripcion),
-    desde_cantidad: toIntOrNull(input.desde_cantidad),
-    descuento_pct: toNumberOrNull(input.descuento_pct),
+    desde_cantidad: toIntOrNull(input.desde_cantidad) ?? 1,
+    descuento_pct: toNumberOrNull(input.descuento_pct) ?? 0,
     precio_unitario: toNumberOrNull(input.precio_unitario),
     moneda: toStringOrNull(input.moneda) ?? "ARS",
     fecha_oferta: toStringOrNull(input.fecha_oferta),

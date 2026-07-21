@@ -132,14 +132,14 @@ async function publicarCanonicalRows(
 
 // Exportado para reusarlo en advertenciasOfertas.ts como advertencia
 // temprana no bloqueante (misma lista, distinto propósito: acá abajo es un
-// error duro al confirmar).
+// error duro al confirmar). desde_cantidad y descuento_pct no están acá:
+// normalizeOfertaRow (mappingOfertas.ts) ya les aplica un default (1 y 0)
+// cuando vienen vacíos, así que nunca llegan null a esta validación.
 export const OFERTA_REQUIRED_FIELDS: (keyof OfertaRowNormalized)[] = [
   "marca",
   "numero_oferta",
   "sku_proveedor",
   "descripcion",
-  "desde_cantidad",
-  "descuento_pct",
   "precio_unitario",
   "fecha_oferta",
   "hora_oferta",
