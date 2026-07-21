@@ -91,7 +91,14 @@ npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
   confundir con `tipoArchivo` (xlsx/pdf/png, el *formato*). Para ofertas,
   `metadataOferta` guarda marca/n° de oferta/fecha/hora detectados por IA
   del banner o nombre de archivo (ver `ofertaMetadata.ts`), editables en la
-  pantalla de revisión antes de confirmar. Estados: `pendiente` →
+  pantalla de revisión antes de confirmar. `sinFechaLimite` (`Boolean`,
+  default `false`, solo relevante si `tipoDatos: "oferta"`): el usuario ya
+  indicó al subir el archivo que la oferta es "hasta agotar stock" (switch en
+  `UploadForm.tsx`), así que `procesarCarga` no le pide a la IA que infiere
+  `metadataOferta.fecha_hasta` (se fuerza `null` sin importar lo que
+  responda el modelo) — se guarda aparte de `fecha_hasta: null` para poder
+  distinguir "el usuario lo marcó a propósito" de "la IA no encontró
+  ninguna fecha". Estados: `pendiente` →
   `procesando` → `revision_pendiente` (proveedor nuevo o headers distintos,
   mapeo sugerido por IA sin aprobar) | `confirmacion_pendiente` (proveedor
   ya conocido, mapeo aprobado de antes, solo falta confirmar los valores) →
@@ -148,9 +155,11 @@ un usuario que autorice esa primera creación. Se crea con
   nombre, resetear password) cuentas. Todo `SYSADMIN`-only, ver
   "Autenticación y roles".
 - `POST /api/uploads` — multipart, campo `file` (xlsx/xls/pdf/png/jpg),
-  opcionalmente `proveedor` (nombre) y `tipoDatos` (`"catalogo"` default |
-  `"oferta"`). Guarda el archivo en `uploads/` y crea una `Carga` en estado
-  `pendiente`.
+  opcionalmente `proveedor` (nombre), `tipoDatos` (`"catalogo"` default |
+  `"oferta"`) y, solo si `tipoDatos` es `"oferta"`, `sinFechaLimite`
+  (`"true"`/`"false"`, ver `Carga.sinFechaLimite` en "Modelo de datos" — se
+  ignora si `tipoDatos` no es `"oferta"`). Guarda el archivo en `uploads/` y
+  crea una `Carga` en estado `pendiente`.
 - `POST /api/uploads/:id/procesar` — extrae la tabla del archivo y resuelve
   el mapeo (reusado o sugerido por IA) contra el schema que corresponda
   según `carga.tipoDatos`, pero **nunca publica sola**:
@@ -302,6 +311,13 @@ un usuario que autorice esa primera creación. Se crea con
   como separador de miles de un decimal real de 3 cifras (ej.
   `"101243.285"`, un precio con varios dígitos enteros, no debe leerse como
   `101243285`) — ver `mapping.test.ts` para los casos límite cubiertos.
+  Un mismo campo canónico puede recibir **más de una columna de origen** en
+  el mapeo (ej. "Producto" y "Envase" → `descripcion`): `applyMapping` las
+  concatena con un espacio, en el orden de `headers`, salteando valores
+  vacíos, en vez de que la última pise a la anterior — mismo criterio en
+  `applyMappingOfertas` (`mappingOfertas.ts`) y en los espejos del frontend
+  (`applyMappingPreview.ts` / `applyMappingPreviewOfertas.ts`, usados para la
+  vista previa instantánea en `ReviewTable.tsx`/`ReviewTableOfertas.tsx`).
 - `advertencias.ts` / `advertenciasOfertas.ts` — etapa 5 del plan original
   (ver `contexto.md`), calculada como paso aparte cuando se abre la pantalla
   de revisión (`GET /api/uploads/:id/advertencias`, ver Endpoints), no
@@ -337,7 +353,13 @@ un usuario que autorice esa primera creación. Se crea con
   oferta) sigue el mismo mecanismo: dato de archivo/banner con fallback a
   metadata, `null` si el archivo dice algo como "hasta agotar stock" o no
   da fecha concreta (eso no significa "no vence", significa que se cierra
-  a mano después, ver `Oferta.activa` en "Modelo de datos").
+  a mano después, ver `Oferta.activa` en "Modelo de datos"). Si
+  `carga.sinFechaLimite` es `true` (usuario marcó "Hasta agotar stock" al
+  subir el archivo, ver "Modelo de datos"), tanto `detectOfertaMetadata`
+  como `extractOfertaWithVision` reciben ese flag: cambian el prompt para
+  decirle al modelo que no busque `fecha_hasta` (ahorra tokens y evita que
+  alucine una fecha), y además fuerzan el resultado a `null` en el código
+  sin importar lo que responda el modelo.
 - `processCarga.ts` — orquesta todo lo anterior, bifurcando por
   `carga.tipoDatos` entre el flujo de catálogo y el de ofertas. Si el paso
   de mapeo falla (ej. sin API key), las filas ya extraídas (y, para
