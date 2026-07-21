@@ -130,8 +130,9 @@ Matriz de permisos actual:
 |---|---|
 | `GET /api/productos`, `GET /api/ofertas` (y sus `/export` y `/secciones`) | `EMPLEADO` (cualquier cuenta activa) |
 | `POST /api/ofertas/cerrar`, `POST /api/ofertas/reactivar` | `ADMINISTRADOR` |
-| `PATCH /api/productos/:id`, `POST /api/productos/editar-lote`, `POST /api/productos/eliminar` | `ADMINISTRADOR` |
-| `PATCH /api/ofertas/:id`, `POST /api/ofertas/editar-lote`, `POST /api/ofertas/eliminar` | `ADMINISTRADOR` |
+| `PATCH /api/productos/:id`, `POST /api/productos/editar-lote`, `POST /api/productos/eliminar`, `POST /api/productos/restaurar` | `ADMINISTRADOR` |
+| `PATCH /api/ofertas/:id`, `POST /api/ofertas/editar-lote`, `POST /api/ofertas/eliminar`, `POST /api/ofertas/restaurar` | `ADMINISTRADOR` |
+| `?incluirEliminados=true` en los `GET` (vista papelera) | `ADMINISTRADOR` (un `EMPLEADO` que mande el flag lo tiene ignorado) |
 | `/api/uploads/*`, `/api/stats`, `/api/proveedores` (todo) | `ADMINISTRADOR` |
 | `/api/usuarios/*` (todo) | `SYSADMIN` |
 
@@ -253,6 +254,15 @@ un usuario que autorice esa primera creación. Se crea con
 - `POST /api/productos/eliminar` — borrado lógico (`ADMINISTRADOR`). Body
   `{"ids": number[]}`. Marca `eliminado: true` (la fila sigue en la base,
   solo deja de aparecer en `GET`). Responde `{"eliminados": <count>}`.
+- `POST /api/productos/restaurar` / `POST /api/ofertas/restaurar` — espejo
+  de `/eliminar` (`ADMINISTRADOR`): mismo body, marca `eliminado: false` y
+  responde `{"restaurados": <count>}`. Es la salida de la "papelera": los
+  `GET` de ambos recursos aceptan `?incluirEliminados=true` (solo
+  `ADMINISTRADOR`+, chequeado inline porque los `GET` no tienen
+  `requireRole`) que cambia la vista a SOLO las filas eliminadas — sin
+  mezclar con las vivas, sin condición de `vigente`/`activa`, y en
+  productos sin el `distinct` (una eliminada que comparte
+  proveedor+marca+SKU con otra fila quedaría oculta).
 - `GET /api/ofertas` — ofertas activas: `activa: true`, `eliminado: false` y
   (`fechaHasta` nula o `>= hoy`, comparación de texto ISO). `?proveedorId=`
   opcional, `?incluirCerradas=true` para ver también las cerradas/vencidas.

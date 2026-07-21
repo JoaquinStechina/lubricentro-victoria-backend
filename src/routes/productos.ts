@@ -48,11 +48,22 @@ const PRODUCTOS_SORTABLE: Record<
   fechaVigencia: (o) => ({ fechaVigencia: o }),
 };
 
+// Papelera: con ?incluirEliminados=true la tabla pasa a mostrar SOLO las
+// filas eliminadas (vista dedicada, no mezcladas con las vivas), y
+// únicamente para ADMINISTRADOR+ — si un EMPLEADO manda el flag a mano se
+// ignora (los GET no tienen requireRole, así que se chequea acá).
+export function vistaPapelera(req: {
+  query: Record<string, unknown>;
+  user?: { rol: string };
+}): boolean {
+  return req.query.incluirEliminados === "true" && !!req.user && req.user.rol !== "EMPLEADO";
+}
+
 // Construye el where de GET / a partir de los query params — extraído para
-// reusarlo en /export (y en la papelera de la Fase 3) sin duplicar la
-// lógica de filtros.
+// reusarlo en /export sin duplicar la lógica de filtros.
 export function buildProductosWhere(req: {
   query: Record<string, unknown>;
+  user?: { rol: string };
 }): Prisma.ProductoPrecioWhereInput {
   const proveedorId = req.query.proveedorId ? Number(req.query.proveedorId) : undefined;
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
@@ -104,6 +115,17 @@ export function buildProductosWhere(req: {
     });
   }
 
+  // En la papelera no se filtra por vigente: una fila eliminada pudo haber
+  // sido superada por una carga posterior mientras estaba en la papelera y
+  // igual tiene que poder verse/restaurarse.
+  if (vistaPapelera(req)) {
+    return {
+      eliminado: true,
+      ...(proveedorId ? { proveedorId } : {}),
+      AND: filtros,
+    };
+  }
+
   return {
     vigente: true,
     eliminado: false,
@@ -132,7 +154,7 @@ export function buildProductosOrderBy(req: {
 productosRouter.get("/export", async (req, res) => {
   const productos = await prisma.productoPrecio.findMany({
     where: buildProductosWhere(req),
-    distinct: ["proveedorId", "marca", "skuProveedor"],
+    distinct: vistaPapelera(req) ? undefined : ["proveedorId", "marca", "skuProveedor"],
     orderBy: buildProductosOrderBy(req),
     select: {
       marca: true,
@@ -204,7 +226,10 @@ productosRouter.get("/", async (req, res) => {
     prisma.productoPrecio.count({ where }),
     prisma.productoPrecio.findMany({
       where,
-      distinct: ["proveedorId", "marca", "skuProveedor"],
+      // En la papelera no aplica el distinct: cada fila eliminada tiene que
+      // verse por separado (y una eliminada que comparte proveedor+marca+SKU
+      // con otra quedaría oculta).
+      distinct: vistaPapelera(req) ? undefined : ["proveedorId", "marca", "skuProveedor"],
       orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
@@ -308,6 +333,21 @@ productosRouter.post("/eliminar", requireRole("ADMINISTRADOR"), async (req, res)
     data: { eliminado: true },
   });
   res.json({ eliminados: count });
+});
+
+// Espejo de /eliminar: saca filas de la papelera (ver vistaPapelera).
+productosRouter.post("/restaurar", requireRole("ADMINISTRADOR"), async (req, res) => {
+  const b = (req.body ?? {}) as { ids?: unknown };
+  const ids = Array.isArray(b.ids) ? b.ids.filter((v) => Number.isFinite(Number(v))).map(Number) : [];
+  if (ids.length === 0) {
+    res.status(400).json({ error: "Body inválido: se esperaba {ids: number[]}" });
+    return;
+  }
+  const { count } = await prisma.productoPrecio.updateMany({
+    where: { id: { in: ids } },
+    data: { eliminado: false },
+  });
+  res.json({ restaurados: count });
 });
 
 productosRouter.patch("/:id", requireRole("ADMINISTRADOR"), async (req, res) => {

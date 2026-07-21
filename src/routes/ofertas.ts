@@ -44,10 +44,22 @@ const OFERTAS_SORTABLE: Record<
   fechaHasta: (o) => ({ fechaHasta: { sort: o, nulls: "last" } }),
 };
 
+// Papelera: con ?incluirEliminados=true la tabla pasa a mostrar SOLO las
+// filas eliminadas, únicamente para ADMINISTRADOR+ (paralelo a
+// productos.ts#vistaPapelera).
+export function vistaPapelera(req: {
+  query: Record<string, unknown>;
+  user?: { rol: string };
+}): boolean {
+  return req.query.incluirEliminados === "true" && !!req.user && req.user.rol !== "EMPLEADO";
+}
+
 // Construye el where de GET / a partir de los query params — extraído para
-// reusarlo en /export (y en la papelera de la Fase 3) sin duplicar la
-// lógica de filtros.
-export function buildOfertasWhere(req: { query: Record<string, unknown> }): Prisma.OfertaWhereInput {
+// reusarlo en /export sin duplicar la lógica de filtros.
+export function buildOfertasWhere(req: {
+  query: Record<string, unknown>;
+  user?: { rol: string };
+}): Prisma.OfertaWhereInput {
   const proveedorId = req.query.proveedorId ? Number(req.query.proveedorId) : undefined;
   const incluirCerradas = req.query.incluirCerradas === "true";
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
@@ -101,6 +113,16 @@ export function buildOfertasWhere(req: { query: Record<string, unknown> }): Pris
         { horaOferta: { contains: search } },
       ],
     });
+  }
+
+  // Papelera: solo eliminadas, sin la condición de "activa" (una oferta
+  // eliminada se ve en la papelera esté cerrada, vencida o no).
+  if (vistaPapelera(req)) {
+    return {
+      eliminado: true,
+      ...(proveedorId ? { proveedorId } : {}),
+      AND: filtros,
+    };
   }
 
   return {
@@ -335,6 +357,21 @@ ofertasRouter.post("/eliminar", requireRole("ADMINISTRADOR"), async (req, res) =
     data: { eliminado: true },
   });
   res.json({ eliminados: count });
+});
+
+// Espejo de /eliminar: saca filas de la papelera (ver vistaPapelera).
+ofertasRouter.post("/restaurar", requireRole("ADMINISTRADOR"), async (req, res) => {
+  const b = (req.body ?? {}) as { ids?: unknown };
+  const ids = Array.isArray(b.ids) ? b.ids.filter((v) => Number.isFinite(Number(v))).map(Number) : [];
+  if (ids.length === 0) {
+    res.status(400).json({ error: "Body inválido: se esperaba {ids: number[]}" });
+    return;
+  }
+  const { count } = await prisma.oferta.updateMany({
+    where: { id: { in: ids } },
+    data: { eliminado: false },
+  });
+  res.json({ restaurados: count });
 });
 
 ofertasRouter.patch("/:id", requireRole("ADMINISTRADOR"), async (req, res) => {
