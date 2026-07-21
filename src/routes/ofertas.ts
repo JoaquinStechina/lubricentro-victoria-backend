@@ -12,18 +12,44 @@ const COLUMNAS_TEXTO_CONTAINS: Record<string, keyof Prisma.OfertaWhereInput> = {
   fechaOferta: "fechaOferta",
   horaOferta: "horaOferta",
 };
-const COLUMNAS_NUMERO_EXACTO = ["numeroOferta", "desdeCantidad", "descuentoPct", "precioUnitario"] as const;
+// numeroOferta y desdeCantidad son identificadores, quedan con igualdad
+// exacta; descuentoPct y precioUnitario se filtran por rango (Min/Max).
+const COLUMNAS_NUMERO_EXACTO = ["numeroOferta", "desdeCantidad"] as const;
+const COLUMNAS_NUMERO_RANGO = ["descuentoPct", "precioUnitario"] as const;
 
-// "Activa" es una condición calculada, no un solo campo: combina el cierre
-// manual (activa:false, ver /cerrar más abajo) con el vencimiento por fecha
-// (fechaHasta en formato YYYY-MM-DD, comparación lexicográfica sin parsear)
-// — evita necesitar un cron/worker que cierre solas las que ya vencieron.
-// null en fechaHasta = "hasta agotar stock", solo se cierra a mano.
-ofertasRouter.get("/", async (req, res) => {
+// Fecha local del servidor en YYYY-MM-DD (en-CA da ese formato). No usar
+// toISOString(): es UTC, y en Argentina (UTC-3) después de las 21:00 haría
+// aparecer como vencida una oferta que todavía vence "hoy".
+export function hoyLocalISO(): string {
+  return new Intl.DateTimeFormat("en-CA").format(new Date());
+}
+
+// Orden por columna: whitelist explícita (mismo criterio que productos.ts).
+// fechaHasta es nullable: nulls al final para que "hasta agotar stock"
+// quede después de las fechas concretas en ambas direcciones.
+const OFERTAS_SORTABLE: Record<
+  string,
+  (o: "asc" | "desc") => Prisma.OfertaOrderByWithRelationInput
+> = {
+  proveedor: (o) => ({ proveedor: { nombre: o } }),
+  marca: (o) => ({ marca: o }),
+  numeroOferta: (o) => ({ numeroOferta: o }),
+  sku: (o) => ({ skuProveedor: o }),
+  descripcion: (o) => ({ descripcion: o }),
+  desdeCantidad: (o) => ({ desdeCantidad: o }),
+  descuentoPct: (o) => ({ descuentoPct: o }),
+  precioUnitario: (o) => ({ precioUnitario: o }),
+  fechaOferta: (o) => ({ fechaOferta: o }),
+  fechaHasta: (o) => ({ fechaHasta: { sort: o, nulls: "last" } }),
+};
+
+// Construye el where de GET / a partir de los query params — extraído para
+// reusarlo en /export (y en la papelera de la Fase 3) sin duplicar la
+// lógica de filtros.
+export function buildOfertasWhere(req: { query: Record<string, unknown> }): Prisma.OfertaWhereInput {
   const proveedorId = req.query.proveedorId ? Number(req.query.proveedorId) : undefined;
   const incluirCerradas = req.query.incluirCerradas === "true";
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
-  const hoyISO = new Date().toISOString().slice(0, 10);
 
   const filtros: Prisma.OfertaWhereInput[] = [];
   for (const [param, campo] of Object.entries(COLUMNAS_TEXTO_CONTAINS)) {
@@ -40,6 +66,14 @@ ofertasRouter.get("/", async (req, res) => {
     if (typeof raw !== "string" || !raw.trim()) continue;
     const num = Number(raw);
     if (Number.isFinite(num)) filtros.push({ [campo]: num } as Prisma.OfertaWhereInput);
+  }
+  for (const campo of COLUMNAS_NUMERO_RANGO) {
+    const rawMin = req.query[`f_${campo}Min`];
+    const rawMax = req.query[`f_${campo}Max`];
+    const min = typeof rawMin === "string" && rawMin.trim() ? Number(rawMin) : NaN;
+    const max = typeof rawMax === "string" && rawMax.trim() ? Number(rawMax) : NaN;
+    if (Number.isFinite(min)) filtros.push({ [campo]: { gte: min } } as Prisma.OfertaWhereInput);
+    if (Number.isFinite(max)) filtros.push({ [campo]: { lte: max } } as Prisma.OfertaWhereInput);
   }
   // "sin_fecha"/"con_fecha": fechaHasta null (hasta agotar stock) no se puede
   // filtrar con un "contains" de texto como las demás columnas.
@@ -68,21 +102,40 @@ ofertasRouter.get("/", async (req, res) => {
     });
   }
 
-  const where: Prisma.OfertaWhereInput = {
+  return {
     eliminado: false,
     ...(proveedorId ? { proveedorId } : {}),
     ...(incluirCerradas
       ? {}
       : {
           activa: true,
-          OR: [{ fechaHasta: null }, { fechaHasta: { gte: hoyISO } }],
+          OR: [{ fechaHasta: null }, { fechaHasta: { gte: hoyLocalISO() } }],
         }),
     AND: filtros,
   };
+}
 
+// Orden elegido por el usuario (?sort=&order=) con desempate por createdAt
+// desc; sin sort válido queda el orden histórico por fecha de carga.
+export function buildOfertasOrderBy(req: {
+  query: Record<string, unknown>;
+}): Prisma.OfertaOrderByWithRelationInput[] {
+  const sort = typeof req.query.sort === "string" ? req.query.sort : "";
+  const order = req.query.order === "asc" ? "asc" : "desc";
+  const sortable = OFERTAS_SORTABLE[sort];
+  if (!sortable) return [{ createdAt: "desc" }];
+  return [sortable(order), { createdAt: "desc" }];
+}
+
+// "Activa" es una condición calculada, no un solo campo: combina el cierre
+// manual (activa:false, ver /cerrar más abajo) con el vencimiento por fecha
+// (fechaHasta en formato YYYY-MM-DD, comparación lexicográfica sin parsear)
+// — evita necesitar un cron/worker que cierre solas las que ya vencieron.
+// null en fechaHasta = "hasta agotar stock", solo se cierra a mano.
+ofertasRouter.get("/", async (req, res) => {
   const ofertas = await prisma.oferta.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
+    where: buildOfertasWhere(req),
+    orderBy: buildOfertasOrderBy(req),
     include: { proveedor: true },
   });
   res.json({ ofertas });

@@ -211,9 +211,23 @@ un usuario que autorice esa primera creación. Se crea con
   `contains` OR sobre proveedor/marca/sku/descripción/sección/vigencia) y
   `?f_<columna>=` por columna (`f_proveedor`, `f_marca`, `f_sku` — matchea
   interno o de proveedor —, `f_descripcion`, `f_seccion`, `f_unidad`,
-  `f_fechaVigencia` con `contains`; `f_precioNeto`, `f_precioConIva`,
-  `f_alicuotaIva` con igualdad exacta). La consume `/cargas/gestion` y la
-  página principal en el frontend.
+  `f_fechaVigencia` con `contains`; `f_alicuotaIva` con igualdad exacta;
+  `f_precioNetoMin/Max` y `f_precioConIvaMin/Max` como rango `gte`/`lte`,
+  cada extremo opcional). Admite `?sort=<columna>&order=asc|desc` contra una
+  whitelist explícita (proveedor, marca, sku, descripcion, seccion,
+  precioNeto, precioConIva, alicuotaIva, fechaVigencia), con desempate por
+  `createdAt desc`; sin `sort` válido queda el orden por fecha de carga. Dos
+  limitaciones del sort documentadas a propósito: "sku" ordena solo por
+  `skuInterno` aunque la celda del frontend muestre `skuInterno ??
+  skuProveedor` (Prisma no hace coalesce en `orderBy`), y en los grupos
+  legacy con duplicados (todas `vigente: true`) el `distinct` se queda con
+  la primera fila según el orden elegido, que puede no ser "la más nueva"
+  del grupo — misma clase de limitación que el `total`, se autocorrige con
+  cargas nuevas. La consume `/cargas/gestion` y la página principal en el
+  frontend.
+- `GET /api/productos/secciones` — lista de valores distintos de `seccion`
+  (vigentes, no eliminados, orden alfabético) para el combobox con búsqueda
+  del filtro de Sección en el frontend.
 - `PATCH /api/productos/:id` — edita una fila del catálogo (`ADMINISTRADOR`).
   Body: subconjunto de `{marca, skuProveedor, skuInterno, descripcion,
   seccion, precioNeto, precioConIva, alicuotaIva, moneda, unidad,
@@ -232,13 +246,20 @@ un usuario que autorice esa primera creación. Se crea con
   opcional, `?incluirCerradas=true` para ver también las cerradas/vencidas.
   Admite los mismos `?search=` y `?f_<columna>=` que `/api/productos`
   (`f_proveedor`, `f_marca`, `f_sku`, `f_descripcion`, `f_fechaOferta`,
-  `f_horaOferta` con `contains`; `f_numeroOferta`, `f_desdeCantidad`,
-  `f_descuentoPct`, `f_precioUnitario` con igualdad exacta). Además,
+  `f_horaOferta` con `contains`; `f_numeroOferta`, `f_desdeCantidad` con
+  igualdad exacta; `f_descuentoPctMin/Max` y `f_precioUnitarioMin/Max` como
+  rango `gte`/`lte`, cada extremo opcional). Además,
   `f_vigencia=sin_fecha|con_fecha` filtra por `fechaHasta` nula ("hasta
   agotar stock") o no nula — es un filtro categórico aparte porque `null` no
   se puede buscar con `contains` — y `f_fechaHasta=YYYY-MM-DD` filtra por
   fecha de vencimiento exacta (viene del date picker del frontend, mismo
-  formato en que se guarda `fechaHasta`).
+  formato en que se guarda `fechaHasta`). Admite `?sort=<columna>&order=`
+  con whitelist propia (proveedor, marca, numeroOferta, sku, descripcion,
+  desdeCantidad, descuentoPct, precioUnitario, fechaOferta, fechaHasta —
+  esta última con nulls al final para que "hasta agotar stock" quede después
+  de las fechas concretas). El "hoy" del vencimiento se calcula con la fecha
+  local del servidor (`hoyLocalISO`), no con `toISOString()` que es UTC y en
+  Argentina adelantaría el vencimiento 3 horas.
 - `POST /api/ofertas/cerrar` / `POST /api/ofertas/reactivar` — body
   `{"proveedorId": <number>, "numeroOferta": <number>, "skuProveedor":
   <string>}`. Cambia `activa` para **todas** las filas que compartan esa

@@ -23,12 +23,37 @@ const COLUMNAS_TEXTO: Record<string, keyof Prisma.ProductoPrecioWhereInput> = {
   fechaVigencia: "fechaVigencia",
   unidad: "unidad",
 };
-const COLUMNAS_NUMERO = ["precioNeto", "precioConIva", "alicuotaIva"] as const;
+// Numéricos con filtro de rango (f_<campo>Min / f_<campo>Max, gte/lte);
+// alicuotaIva queda con igualdad exacta (tiene un puñado de valores fijos).
+const COLUMNAS_NUMERO_RANGO = ["precioNeto", "precioConIva"] as const;
+const COLUMNAS_NUMERO_EXACTO = ["alicuotaIva"] as const;
 
-productosRouter.get("/", async (req, res) => {
+// Orden por columna: whitelist explícita clave-de-columna -> orderBy de
+// Prisma (nunca interpolar req.query directo en el orderBy). "sku" ordena
+// solo por skuInterno aunque la celda muestre skuInterno ?? skuProveedor
+// (Prisma no puede hacer coalesce en orderBy) — documentado en el README.
+const PRODUCTOS_SORTABLE: Record<
+  string,
+  (o: "asc" | "desc") => Prisma.ProductoPrecioOrderByWithRelationInput
+> = {
+  proveedor: (o) => ({ proveedor: { nombre: o } }),
+  marca: (o) => ({ marca: o }),
+  sku: (o) => ({ skuInterno: o }),
+  descripcion: (o) => ({ descripcion: o }),
+  seccion: (o) => ({ seccion: o }),
+  precioNeto: (o) => ({ precioNeto: o }),
+  precioConIva: (o) => ({ precioConIva: o }),
+  alicuotaIva: (o) => ({ alicuotaIva: o }),
+  fechaVigencia: (o) => ({ fechaVigencia: o }),
+};
+
+// Construye el where de GET / a partir de los query params — extraído para
+// reusarlo en /export (y en la papelera de la Fase 3) sin duplicar la
+// lógica de filtros.
+export function buildProductosWhere(req: {
+  query: Record<string, unknown>;
+}): Prisma.ProductoPrecioWhereInput {
   const proveedorId = req.query.proveedorId ? Number(req.query.proveedorId) : undefined;
-  const page = Math.max(1, Number(req.query.page) || 1);
-  const pageSize = Math.min(500, Math.max(1, Number(req.query.pageSize) || 100));
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
 
   const filtros: Prisma.ProductoPrecioWhereInput[] = [];
@@ -50,11 +75,19 @@ productosRouter.get("/", async (req, res) => {
   if (typeof rawProveedorFiltro === "string" && rawProveedorFiltro.trim()) {
     filtros.push({ proveedor: { nombre: { contains: rawProveedorFiltro.trim() } } });
   }
-  for (const campo of COLUMNAS_NUMERO) {
+  for (const campo of COLUMNAS_NUMERO_EXACTO) {
     const raw = req.query[`f_${campo}`];
     if (typeof raw !== "string" || !raw.trim()) continue;
     const num = Number(raw);
     if (Number.isFinite(num)) filtros.push({ [campo]: num } as Prisma.ProductoPrecioWhereInput);
+  }
+  for (const campo of COLUMNAS_NUMERO_RANGO) {
+    const rawMin = req.query[`f_${campo}Min`];
+    const rawMax = req.query[`f_${campo}Max`];
+    const min = typeof rawMin === "string" && rawMin.trim() ? Number(rawMin) : NaN;
+    const max = typeof rawMax === "string" && rawMax.trim() ? Number(rawMax) : NaN;
+    if (Number.isFinite(min)) filtros.push({ [campo]: { gte: min } } as Prisma.ProductoPrecioWhereInput);
+    if (Number.isFinite(max)) filtros.push({ [campo]: { lte: max } } as Prisma.ProductoPrecioWhereInput);
   }
   if (search) {
     filtros.push({
@@ -70,19 +103,52 @@ productosRouter.get("/", async (req, res) => {
     });
   }
 
-  const where: Prisma.ProductoPrecioWhereInput = {
+  return {
     vigente: true,
     eliminado: false,
     ...(proveedorId ? { proveedorId } : {}),
     AND: filtros,
   };
+}
+
+// Orden elegido por el usuario (?sort=&order=) con desempate por createdAt
+// desc; sin sort (o con una clave fuera de la whitelist) queda el orden
+// histórico por fecha de carga.
+export function buildProductosOrderBy(req: {
+  query: Record<string, unknown>;
+}): Prisma.ProductoPrecioOrderByWithRelationInput[] {
+  const sort = typeof req.query.sort === "string" ? req.query.sort : "";
+  const order = req.query.order === "asc" ? "asc" : "desc";
+  const sortable = PRODUCTOS_SORTABLE[sort];
+  if (!sortable) return [{ createdAt: "desc" }];
+  return [sortable(order), { createdAt: "desc" }];
+}
+
+// Valores distintos de Sección para el combobox del filtro en el frontend.
+// Registrado antes de las rutas /:id (GET no colisiona con PATCH /:id, pero
+// se mantiene el criterio de orden del archivo).
+productosRouter.get("/secciones", async (_req, res) => {
+  const rows = await prisma.productoPrecio.findMany({
+    where: { vigente: true, eliminado: false, seccion: { not: null } },
+    distinct: ["seccion"],
+    select: { seccion: true },
+    orderBy: { seccion: "asc" },
+  });
+  res.json(rows.map((r) => r.seccion));
+});
+
+productosRouter.get("/", async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(500, Math.max(1, Number(req.query.pageSize) || 100));
+  const where = buildProductosWhere(req);
+  const orderBy = buildProductosOrderBy(req);
 
   const [total, items] = await Promise.all([
     prisma.productoPrecio.count({ where }),
     prisma.productoPrecio.findMany({
       where,
       distinct: ["proveedorId", "marca", "skuProveedor"],
-      orderBy: { createdAt: "desc" },
+      orderBy,
       skip: (page - 1) * pageSize,
       take: pageSize,
       include: { proveedor: true },
