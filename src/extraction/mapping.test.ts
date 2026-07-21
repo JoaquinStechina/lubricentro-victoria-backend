@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { toNumberOrNull } from "./mapping.js";
+import { applyMapping, toNumberOrNull } from "./mapping.js";
 
 // Casos reales relevados en ofertas/ofertas baterías autos bosch.xls y en
 // productos_todos.json (ver docs/plan-ofertas.md). El valor con 3 decimales
@@ -41,4 +41,28 @@ test("toNumberOrNull: null/undefined/vacío -> null", () => {
   assert.equal(toNumberOrNull(null), null);
   assert.equal(toNumberOrNull(undefined), null);
   assert.equal(toNumberOrNull(""), null);
+});
+
+test("applyMapping: dos columnas al mismo destino se concatenan en orden", () => {
+  const headers = ["Producto", "Envase"];
+  const rows = [{ Producto: "Filtro de aceite", Envase: "1L" }];
+  const mapping = { Producto: "descripcion", Envase: "descripcion" } as const;
+  const [row] = applyMapping(headers, rows, mapping);
+  assert.equal(row.descripcion, "Filtro de aceite 1L");
+});
+
+test("applyMapping: columnas vacías no dejan espacios sobrantes al concatenar", () => {
+  const headers = ["Producto", "Envase"];
+  const rows = [{ Producto: "Filtro de aceite", Envase: "" }];
+  const mapping = { Producto: "descripcion", Envase: "descripcion" } as const;
+  const [row] = applyMapping(headers, rows, mapping);
+  assert.equal(row.descripcion, "Filtro de aceite");
+});
+
+test("applyMapping: una sola columna mapeada no cambia de comportamiento", () => {
+  const headers = ["Precio"];
+  const rows = [{ Precio: 1985.78 }];
+  const mapping = { Precio: "precio_neto" } as const;
+  const [row] = applyMapping(headers, rows, mapping);
+  assert.equal(row.precio_neto, 1985.78);
 });

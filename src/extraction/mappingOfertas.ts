@@ -153,17 +153,32 @@ export function applyMappingOfertas(
   metadata: OfertaMetadata
 ): OfertaRowNormalized[] {
   return rows.map((row) => {
-    const canonical: Partial<Record<OfertaField, unknown>> = {};
+    const valoresPorDestino = new Map<OfertaField, unknown[]>();
     const rawData: Record<string, unknown> = {};
 
     for (const h of headers) {
       const destino = mapping[h];
       const valor = row[h];
       if (destino) {
-        canonical[destino] = valor;
+        const lista = valoresPorDestino.get(destino) ?? [];
+        lista.push(valor);
+        valoresPorDestino.set(destino, lista);
       } else if (valor !== null && valor !== undefined && valor !== "") {
         rawData[h] = valor;
       }
+    }
+
+    // Si dos o más columnas mapean al mismo campo, se concatenan en orden
+    // separadas por espacio (ver combinarValores en mapping.ts).
+    const canonical: Partial<Record<OfertaField, unknown>> = {};
+    for (const [destino, valores] of valoresPorDestino) {
+      canonical[destino] =
+        valores.length === 1
+          ? valores[0]
+          : valores
+              .map((v) => (v === null || v === undefined ? "" : String(v).trim()))
+              .filter((v) => v !== "")
+              .join(" ");
     }
 
     if (canonical.marca === undefined || canonical.marca === null || canonical.marca === "") {

@@ -206,23 +206,43 @@ export function normalizeCanonicalRow(
   };
 }
 
+// Si dos o más columnas de origen apuntan al mismo campo destino (ej.
+// "Producto" y "Envase" -> descripcion), se concatenan en el orden en que
+// aparecen en `headers`, separadas por espacio, salteando valores vacíos.
+function combinarValores(valores: unknown[]): string {
+  return valores
+    .map((v) => (v === null || v === undefined ? "" : String(v).trim()))
+    .filter((v) => v !== "")
+    .join(" ");
+}
+
 export function applyMapping(
   headers: string[],
   rows: ExtractedRow[],
   mapping: ColumnMapping
 ): CanonicalRow[] {
   return rows.map((row) => {
-    const canonical: Partial<Record<CanonicalField, unknown>> = {};
+    const valoresPorDestino = new Map<CanonicalField, unknown[]>();
     const rawData: Record<string, unknown> = {};
 
     for (const h of headers) {
       const destino = mapping[h];
       const valor = row[h];
       if (destino) {
-        canonical[destino] = valor;
+        const lista = valoresPorDestino.get(destino) ?? [];
+        lista.push(valor);
+        valoresPorDestino.set(destino, lista);
       } else if (valor !== null && valor !== undefined && valor !== "") {
         rawData[h] = valor;
       }
+    }
+
+    const canonical: Partial<Record<CanonicalField, unknown>> = {};
+    for (const [destino, valores] of valoresPorDestino) {
+      // Una sola columna mapeada: se deja el valor crudo tal cual (puede ser
+      // number) para no cambiar el comportamiento existente. Dos o más: se
+      // combinan como texto.
+      canonical[destino] = valores.length === 1 ? valores[0] : combinarValores(valores);
     }
 
     // seccion/marca pueden venir de una columna mapeada explícitamente, o
