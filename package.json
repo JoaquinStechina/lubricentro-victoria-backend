@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc",
-    "start": "node dist/server.js",
+    "start": "node dist/src/server.js",
     "test": "tsx --test src/**/*.test.ts",
     "seed": "tsx scripts/seed-from-json.ts",
     "seed:sysadmin": "tsx scripts/seed-sysadmin.ts",
