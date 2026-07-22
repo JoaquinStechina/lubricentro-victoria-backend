@@ -24,6 +24,7 @@
     "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
     "openai": "^6.48.0",
+    "pdf-to-img": "^6.2.0",
     "xlsx": "https://cdn.sheetjs.com/xlsx-latest/xlsx-latest.tgz"
   },
   "devDependencies": {

@@ -188,6 +188,16 @@ un usuario que autorice esa primera creación. Se crea con
 - `GET /api/uploads` / `GET /api/uploads/:id` — estado de las cargas,
   incluyendo `filasExtraidas`/`mapeoSugerido` cuando está en revisión o
   esperando confirmación.
+- `DELETE /api/uploads/:id` — cancela una carga (botón "Cancelar carga" al
+  lado de "Confirmar carga" en la pantalla de revisión). Solo permitido en
+  `revision_pendiente`/`confirmacion_pendiente` (400 en cualquier otro
+  estado, sobre todo `completado`: ahí ya hay `ProductoPrecio`/`Oferta`
+  publicados y "cancelar" dejaría de tener un significado claro). Borra la
+  fila de `Carga` y, best-effort, el archivo original en `uploads/` — un
+  archivo huérfano si el `unlink` falla no es grave (nada vuelve a leer
+  `rutaArchivo` una vez borrada la fila), así que ese error solo se loguea,
+  no bloquea la respuesta. Responde `{"id": <id>}` con `200`, nunca `204`
+  sin body (`apiFetch` del frontend siempre hace `res.json()`).
 - `GET /api/uploads/:id/advertencias` — etapa 5 (ver `contexto.md` y
   "Extracción" más abajo): corre los chequeos determinísticos
   (`advertencias.ts` / `advertenciasOfertas.ts` según `carga.tipoDatos`)
@@ -377,16 +387,39 @@ un usuario que autorice esa primera creación. Se crea con
   (usado por `processCarga.ts`) prueba primero la heurística por hoja y
   solo cae a este fallback en las hojas donde falló; si el LLM tampoco
   encuentra una tabla reconocible, esa hoja se descarta igual que antes.
-- `vision.ts` — pdf/png vía OpenRouter (bloque `file` con data URI para pdf,
-  usando el plugin `file-parser` de OpenRouter con engine `pdf-text`;
-  `image_url` con data URI para png/jpg), le pide un JSON `{headers, rows}`.
-  Para PDFs escaneados (imagen pura, sin texto real) conviene cambiar el
-  engine del plugin a `mistral-ocr` en `vision.ts`. Probado en vivo con
-  imágenes reales de proveedores contra siete modelos distintos de
-  OpenRouter — hay diferencias reales de calidad entre modelos, algunos
-  insertan dígitos de más en códigos de producto o confunden dos productos
-  entre sí, de ahí que la revisión humana antes de publicar sea
-  obligatoria para toda carga.
+- `vision.ts` — pdf/png/jpg vía OpenRouter, todo como `image_url` con data
+  URI: para png/jpg es la imagen tal cual, para pdf es cada página
+  **renderizada localmente como PNG** (`pdf-to-img`, sin binarios nativos
+  del sistema) y mandada como una llamada al modelo por página, combinando
+  después las tablas de cada página (mismo `combineTables` que usa
+  `excel.ts`). No siempre fue así — ver "Extracción de PDF: de plugin de
+  terceros a render página por página" en `contexto.md` para el diagnóstico
+  completo que llevó a este cambio (en resumen: mandar el PDF entero al
+  plugin `file-parser` de OpenRouter resultó poco confiable en un archivo
+  real — el engine `pdf-text` devolvía tablas vacías en silencio, y
+  `mistral-ocr` sí leía el documento pero la respuesta se cortaba contra
+  `max_tokens` en documentos de varios cientos de filas). Dos cosas a saber
+  de la implementación página-por-página:
+  - Como cada página es una llamada independiente, el modelo no ve las
+    páginas anteriores — `conContextoDePagina` le pasa a cada llamada (a
+    partir de la página 2) la última sección detectada (`ultimaSeccion`,
+    para que `_seccion` no se "reinicie" en cada página) y los headers ya
+    detectados en una página anterior (`headersPrevios`), porque varios
+    proveedores no repiten la fila de encabezado en cada página impresa del
+    PDF — sin este contexto el modelo termina usando la primera fila de
+    datos de esa página como si fuera el encabezado.
+  - `extractOfertaWithVision` sigue el mismo patrón para el flujo de
+    ofertas, con `mergeOfertaMetadata` en vez de `ultimaSeccion`: la
+    metadata "de todo el archivo" (marca/n° de oferta/fecha/hora) se le
+    pide al modelo en cada página igual, y se toma el primer valor no nulo
+    por campo entre todas las páginas (normalmente solo la página con el
+    banner trae algo; así una página sin banner no pisa con `null` el dato
+    bueno de otra).
+  Probado en vivo con imágenes reales de proveedores contra varios modelos
+  distintos de OpenRouter — hay diferencias reales de calidad entre
+  modelos, algunos insertan dígitos de más en códigos de producto o
+  confunden dos productos entre sí, de ahí que la revisión humana antes de
+  publicar sea obligatoria para toda carga.
 - `mapping.ts` — reusa `MapeoColumna` (filtrado por `tipoDatos: "catalogo"`)
   si cubre alguna columna detectada; si no, le pide al LLM una sugerencia
   (columna origen → campo canónico o `null`), que **no se aplica sola**,

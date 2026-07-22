@@ -302,3 +302,41 @@ uploadsRouter.post("/:id/confirmar", async (req, res) => {
     res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
   }
 });
+
+// Cancela una carga todavía no publicada (botón "Cancelar carga" en la
+// pantalla de revisión). Solo permitido en revision_pendiente/
+// confirmacion_pendiente: son los únicos estados sin ProductoPrecio/Oferta
+// ya vinculados (esos se crean recién al confirmar), así que borrar la
+// Carga acá no deja nada huérfano de forma inesperada.
+uploadsRouter.delete("/:id", async (req, res) => {
+  const id = Number(req.params.id);
+  const carga = await prisma.carga.findUnique({ where: { id } });
+  if (!carga) {
+    res.status(404).json({ error: "Carga no encontrada." });
+    return;
+  }
+  if (carga.estado !== "revision_pendiente" && carga.estado !== "confirmacion_pendiente") {
+    res.status(400).json({ error: "Solo se puede cancelar una carga en revisión, todavía no publicada." });
+    return;
+  }
+  try {
+    await prisma.carga.delete({ where: { id } });
+    res.json({ id });
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : String(err) });
+    return;
+  }
+  // Limpieza del archivo en disco: best-effort, no bloquea la respuesta ya
+  // enviada. La Carga (el dato que le importa al usuario) ya se borró; que
+  // sobreviva un archivo huérfano en uploads/ es inofensivo (nada vuelve a
+  // leer carga.rutaArchivo una vez borrada la fila), mientras que fallar acá
+  // por un archivo bloqueado dejaría al usuario sin forma de cancelar la
+  // carga desde la UI. Mismo criterio de "ignorar ENOENT" que
+  // eliminarArchivoImagen (../lib/imagenes.ts), pero acá cualquier otro
+  // error solo se loguea, no se relanza.
+  fs.promises.unlink(carga.rutaArchivo).catch((err) => {
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.error(`No se pudo borrar el archivo de la carga ${id} (${carga.rutaArchivo}):`, err);
+    }
+  });
+});
