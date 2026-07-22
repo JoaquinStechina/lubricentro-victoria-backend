@@ -48,6 +48,7 @@ app.use((err: Error, _req: express.Request, res: express.Response, _next: expres
   res.status(500).json({ error: err.message });
 });
 
+// ping-pipeline-1784735891: commit de prueba para el deploy automatico
 const port = Number(process.env.PORT ?? 4000);
 app.listen(port, () => {
   console.log(`Backend escuchando en http://localhost:${port}`);
