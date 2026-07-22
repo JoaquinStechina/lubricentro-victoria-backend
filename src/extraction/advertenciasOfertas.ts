@@ -39,6 +39,18 @@ export async function detectarAdvertenciasOfertas(
     }
   });
 
+  // 1b. cantidad_disponible negativa (campo opcional — null es válido y no
+  // genera advertencia, es "no informado", distinto de "cero unidades").
+  filas.forEach((row, fila) => {
+    if (row.cantidad_disponible !== null && row.cantidad_disponible < 0) {
+      advertencias.push({
+        fila,
+        campo: "cantidad_disponible",
+        mensaje: `Cantidad disponible negativa (${row.cantidad_disponible})`,
+      });
+    }
+  });
+
   // 2. Tramo duplicado: mismo (sku_proveedor, desde_cantidad) repetido.
   const filasPorTramo = new Map<string, number[]>();
   filas.forEach((row, fila) => {

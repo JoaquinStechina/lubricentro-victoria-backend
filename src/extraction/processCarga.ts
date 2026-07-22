@@ -188,6 +188,7 @@ async function publicarOfertaRows(
         fechaOferta: r.fecha_oferta!,
         horaOferta: r.hora_oferta!,
         fechaHasta: r.fecha_hasta,
+        cantidadDisponible: r.cantidad_disponible,
         activa: true,
         archivoOrigen,
         rawData: r.raw_data as unknown as Prisma.InputJsonValue,

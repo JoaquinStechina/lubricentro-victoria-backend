@@ -101,6 +101,13 @@ el browser descarta la cookie sin avisar y el login queda roto en silencio.
     cron/worker (comparación de texto en formato ISO, no hay parseo de
     fechas real en este schema). `activa` nunca lo toca el pipeline de
     extracción/mapeo, solo el endpoint de cierre/reactivación.
+  - `Oferta.cantidadDisponible` (`Int?`): stock disponible para la oferta,
+    si el proveedor lo informa (columna tipo "Cantidad disponible"/"Stock
+    disponible"). A diferencia de `desdeCantidad`/`descuentoPct`, es
+    opcional de verdad — no tiene default, si el proveedor no lo informa
+    queda `null` (distinto de "cero unidades"). Filtrable por rango
+    (`f_cantidadDisponibleMin/Max`) y editable individual o en lote, igual
+    que el resto de los campos numéricos.
 - `MapeoColumna` — mapeo columna origen → campo canónico, por proveedor y
   por `tipoDatos` (`"catalogo"` | `"oferta"`, ver `Carga` abajo): un mismo
   proveedor puede tener una columna "SKU" mapeada distinto en su catálogo y

@@ -17,7 +17,7 @@ const COLUMNAS_TEXTO_CONTAINS: Record<string, keyof Prisma.OfertaWhereInput> = {
 // numeroOferta y desdeCantidad son identificadores, quedan con igualdad
 // exacta; descuentoPct y precioUnitario se filtran por rango (Min/Max).
 const COLUMNAS_NUMERO_EXACTO = ["numeroOferta", "desdeCantidad"] as const;
-const COLUMNAS_NUMERO_RANGO = ["descuentoPct", "precioUnitario"] as const;
+const COLUMNAS_NUMERO_RANGO = ["descuentoPct", "precioUnitario", "cantidadDisponible"] as const;
 
 // Fecha local del servidor en YYYY-MM-DD (en-CA da ese formato). No usar
 // toISOString(): es UTC, y en Argentina (UTC-3) después de las 21:00 haría
@@ -43,6 +43,7 @@ const OFERTAS_SORTABLE: Record<
   precioUnitario: (o) => ({ precioUnitario: o }),
   fechaOferta: (o) => ({ fechaOferta: o }),
   fechaHasta: (o) => ({ fechaHasta: { sort: o, nulls: "last" } }),
+  cantidadDisponible: (o) => ({ cantidadDisponible: { sort: o, nulls: "last" } }),
 };
 
 // Papelera: con ?incluirEliminados=true la tabla pasa a mostrar SOLO las
@@ -197,6 +198,7 @@ ofertasRouter.get("/export", async (req, res) => {
       fechaOferta: true,
       horaOferta: true,
       fechaHasta: true,
+      cantidadDisponible: true,
       activa: true,
       proveedor: { select: { nombre: true } },
     },
@@ -216,6 +218,7 @@ ofertasRouter.get("/export", async (req, res) => {
     "Fecha oferta",
     "Hora oferta",
     "Válida hasta",
+    "Cantidad disponible",
     "Estado",
   ];
   const filas: FilaExport[] = ofertas.map((o) => ({
@@ -231,6 +234,7 @@ ofertasRouter.get("/export", async (req, res) => {
     "Fecha oferta": o.fechaOferta,
     "Hora oferta": o.horaOferta,
     "Válida hasta": o.fechaHasta ?? "Hasta agotar stock",
+    "Cantidad disponible": o.cantidadDisponible,
     Estado: !o.activa ? "Cerrada" : o.fechaHasta && o.fechaHasta < hoy ? "Vencida" : "Activa",
   }));
   enviarExport(res, req.query.formato, "ofertas", headers, filas);
@@ -331,6 +335,7 @@ const SINGLE_EDIT_FIELDS = [
   "fechaOferta",
   "horaOferta",
   "fechaHasta",
+  "cantidadDisponible",
 ] as const;
 
 const BULK_EDIT_FIELDS = [
@@ -341,11 +346,18 @@ const BULK_EDIT_FIELDS = [
   "fechaOferta",
   "horaOferta",
   "fechaHasta",
+  "cantidadDisponible",
 ] as const;
 type BulkEditField = (typeof BULK_EDIT_FIELDS)[number];
 
-const CAMPOS_NUMERICOS = new Set<string>(["numeroOferta", "desdeCantidad", "descuentoPct", "precioUnitario"]);
-const CAMPOS_NULEABLES = new Set<string>(["fechaHasta"]);
+const CAMPOS_NUMERICOS = new Set<string>([
+  "numeroOferta",
+  "desdeCantidad",
+  "descuentoPct",
+  "precioUnitario",
+  "cantidadDisponible",
+]);
+const CAMPOS_NULEABLES = new Set<string>(["fechaHasta", "cantidadDisponible"]);
 
 function coerceValor(campo: string, value: unknown): { ok: true; value: unknown } | { ok: false } {
   if (value === null) {
@@ -441,6 +453,16 @@ ofertasRouter.post("/", requireRole("ADMINISTRADOR"), async (req, res) => {
     res.status(400).json({ error: "desdeCantidad, descuentoPct, precioUnitario y numeroOferta deben ser numéricos." });
     return;
   }
+  // A diferencia de desdeCantidad/descuentoPct, no tiene default: vacío
+  // queda null (proveedor no informó stock), no "cero".
+  let cantidadDisponible: number | null = null;
+  if (body.cantidadDisponible !== undefined && body.cantidadDisponible !== null && body.cantidadDisponible !== "") {
+    cantidadDisponible = Number(body.cantidadDisponible);
+    if (!Number.isFinite(cantidadDisponible)) {
+      res.status(400).json({ error: "cantidadDisponible debe ser numérico." });
+      return;
+    }
+  }
 
   try {
     const oferta = await prisma.oferta.create({
@@ -457,6 +479,7 @@ ofertasRouter.post("/", requireRole("ADMINISTRADOR"), async (req, res) => {
         fechaOferta: String(body.fechaOferta),
         horaOferta: String(body.horaOferta),
         fechaHasta: typeof body.fechaHasta === "string" && body.fechaHasta ? body.fechaHasta : null,
+        cantidadDisponible,
         archivoOrigen: "Alta manual",
         cargaId: null,
         rawData: undefined,

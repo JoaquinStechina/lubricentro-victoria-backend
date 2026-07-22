@@ -76,6 +76,7 @@ Reglas:
 - "numero_oferta", "marca", "fecha_oferta", "hora_oferta", "fecha_hasta" a veces son columnas de la tabla y a veces no aparecen en ninguna columna (vienen de un banner o del nombre de archivo, eso se resuelve aparte) — si no ves una columna clara para alguno de estos, dejalo en null.
 - "fecha_hasta" es la fecha de vencimiento de la oferta (formato YYYY-MM-DD) — poco común como columna real, casi siempre es un dato de archivo, no de fila.
 - "precio_unitario" es el precio final ya con el descuento de ese tramo aplicado.
+- "cantidad_disponible" es el stock disponible para esa oferta (columnas como "Cantidad disponible", "Stock disponible", "Disponible") — muchos proveedores NO la traen, es normal dejarla en null si no ves una columna clara.
 - Si no estás seguro de una columna, dejala en null (mejor no mapear que mapear mal).
 
 Devolvé ÚNICAMENTE un objeto JSON (sin texto antes ni después, sin markdown) de la forma:
@@ -140,6 +141,7 @@ export function normalizeOfertaRow(
     fecha_oferta: toStringOrNull(input.fecha_oferta),
     hora_oferta: toStringOrNull(input.hora_oferta),
     fecha_hasta: toStringOrNull(input.fecha_hasta),
+    cantidad_disponible: toIntOrNull(input.cantidad_disponible),
     raw_data: rawData,
   };
 }

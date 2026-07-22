@@ -14,6 +14,7 @@ export const CANONICAL_FIELDS_OFERTAS = [
   "fecha_oferta",
   "hora_oferta",
   "fecha_hasta",
+  "cantidad_disponible",
 ] as const;
 
 export type OfertaField = (typeof CANONICAL_FIELDS_OFERTAS)[number];
@@ -57,5 +58,10 @@ export type OfertaRowNormalized = {
   fecha_oferta: string | null;
   hora_oferta: string | null;
   fecha_hasta: string | null;
+  // Stock disponible declarado por el proveedor (columna, no metadata de
+  // archivo). Opcional de verdad: a diferencia de desde_cantidad/
+  // descuento_pct, si viene vacío se queda en null, no se le infiere 0/1 —
+  // null acá significa "el proveedor no informó esto", no "no hay stock".
+  cantidad_disponible: number | null;
   raw_data: Record<string, unknown>;
 };
