@@ -50,6 +50,26 @@ error claro (`Falta OPENROUTER_API_KEY...`) en vez de romper el proceso.
 npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
 ```
 
+## Despliegue
+
+En producción corre en Docker (`Dockerfile`, build multi-stage con `node:20-slim` — no
+`alpine`, por el binding nativo `@napi-rs/canvas` que usa `pdf-to-img`), detrás de un nginx que
+enruta por path sobre un único puerto público — arquitectura completa, `docker-compose.yml` y
+pasos de setup del VPS en `../infra/README.md`.
+
+Dos detalles del build que no se ven en dev (`npm run dev` corre `tsx` directo sobre `src/`,
+nunca pasa por `dist/`):
+- `tsconfig.json` tiene `rootDir: "."`, así que `tsc` compila a `dist/src/*.js` y
+  `dist/scripts/*.js`, no `dist/*.js` — el script `start` (`node dist/src/server.js`) y el `CMD`
+  del `Dockerfile` reflejan eso.
+- El seed de producción no usa `npm run seed:sysadmin` (`tsx` es una devDependency, no está en
+  la imagen): se corre directo `node dist/scripts/seed-sysadmin.js`, el JS ya compilado.
+
+`COOKIE_SECURE` (ver `.env.example`) controla el flag `Secure` de la cookie de sesión,
+desacoplado de `NODE_ENV` — necesario porque sin dominio propio no hay TLS válido posible (Let's
+Encrypt no emite para IPs desnudas): en ese caso hay que servir por HTTP y dejarlo en `false`, o
+el browser descarta la cookie sin avisar y el login queda roto en silencio.
+
 ## Modelo de datos
 
 - `Usuario` — cuentas internas del sistema (`email` único, `passwordHash` con
