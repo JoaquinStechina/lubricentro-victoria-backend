@@ -8,7 +8,11 @@ export const authRouter = Router();
 const COOKIE_OPTIONS = {
   httpOnly: true,
   sameSite: "lax" as const,
-  secure: process.env.NODE_ENV === "production",
+  // Desacoplado de NODE_ENV: sin dominio propio no hay TLS válido posible
+  // (Let's Encrypt no emite para IPs desnudas), así que en producción por IP
+  // hay que servir por HTTP y dejar esto en false — si no, el browser
+  // descarta la cookie Secure sobre HTTP y el login queda roto en silencio.
+  secure: process.env.COOKIE_SECURE === "true",
   path: "/",
 };
 
