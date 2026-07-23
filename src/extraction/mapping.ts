@@ -1,5 +1,6 @@
 import { prisma } from "../db.js";
 import { getOpenRouterClient } from "../openrouter.js";
+import { roundTo2 } from "../lib/numeros.js";
 import { extractJsonObject } from "./llmJson.js";
 import {
   CANONICAL_FIELDS,
@@ -196,17 +197,21 @@ export function normalizeCanonicalRow(input: CanonicalRowUpload): CanonicalRow {
     sku_interno: toStringOrNull(input.sku_interno),
     descripcion: toStringOrNull(input.descripcion),
     seccion: toStringOrNull(input.seccion),
-    precio_neto: toNumberOrNull(input.precio_neto),
-    precio_con_iva: toNumberOrNull(input.precio_con_iva),
-    precio_lista: toNumberOrNull(input.precio_lista),
-    alicuota_iva: toNumberOrNull(input.alicuota_iva),
+    // roundTo2 acá, no dentro de toNumberOrNull: el parseo tiene que
+    // preservar la precisión real del string de origen para interpretar
+    // bien miles/decimales (ver tests de toNumberOrNull) — el redondeo a 2
+    // decimales es una regla de negocio sobre el valor ya parseado.
+    precio_neto: roundTo2(toNumberOrNull(input.precio_neto)),
+    precio_con_iva: roundTo2(toNumberOrNull(input.precio_con_iva)),
+    precio_lista: roundTo2(toNumberOrNull(input.precio_lista)),
+    alicuota_iva: roundTo2(toNumberOrNull(input.alicuota_iva)),
     moneda: toStringOrNull(input.moneda) ?? "ARS",
     unidad: toStringOrNull(input.unidad),
     fecha_vigencia: toStringOrNull(input.fecha_vigencia),
     // Ninguno de los dos es un CanonicalField (no se mapean desde una
     // columna del archivo): llegan ya calculados desde ReviewTable.tsx.
-    precio_lista_con_iva: toNumberOrNull(input.precio_lista_con_iva),
-    precio_sugerido: toNumberOrNull(input.precio_sugerido),
+    precio_lista_con_iva: roundTo2(toNumberOrNull(input.precio_lista_con_iva)),
+    precio_sugerido: roundTo2(toNumberOrNull(input.precio_sugerido)),
     raw_data: rawData,
   };
 }

@@ -1,5 +1,6 @@
 import { prisma } from "../db.js";
 import { getOpenRouterClient } from "../openrouter.js";
+import { roundTo2 } from "../lib/numeros.js";
 import { extractJsonObject } from "./llmJson.js";
 import { toStringOrNull, toNumberOrNull, buildRepresentativeSample } from "./mapping.js";
 import {
@@ -135,8 +136,9 @@ export function normalizeOfertaRow(
     sku_proveedor: toStringOrNull(input.sku_proveedor),
     descripcion: toStringOrNull(input.descripcion),
     desde_cantidad: toIntOrNull(input.desde_cantidad) ?? 1,
-    descuento_pct: toNumberOrNull(input.descuento_pct) ?? 0,
-    precio_unitario: toNumberOrNull(input.precio_unitario),
+    // roundTo2 sobre el valor ya parseado (ver mismo criterio en mapping.ts).
+    descuento_pct: roundTo2(toNumberOrNull(input.descuento_pct)) ?? 0,
+    precio_unitario: roundTo2(toNumberOrNull(input.precio_unitario)),
     moneda: toStringOrNull(input.moneda) ?? "ARS",
     fecha_oferta: toStringOrNull(input.fecha_oferta),
     hora_oferta: toStringOrNull(input.hora_oferta),

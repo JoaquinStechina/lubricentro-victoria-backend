@@ -4,6 +4,7 @@ import { prisma } from "../db.js";
 import { requireRole } from "../middleware/auth.js";
 import { enviarExport, type FilaExport } from "./exportar.js";
 import { imagenUploadSingle, imagenPublicUrl, eliminarArchivoImagen } from "../lib/imagenes.js";
+import { roundTo2 } from "../lib/numeros.js";
 
 export const ofertasRouter = Router();
 
@@ -367,7 +368,7 @@ function coerceValor(campo: string, value: unknown): { ok: true; value: unknown 
   if (CAMPOS_NUMERICOS.has(campo)) {
     const num = Number(value);
     if (!Number.isFinite(num)) return { ok: false };
-    return { ok: true, value: num };
+    return { ok: true, value: roundTo2(num) };
   }
   if (typeof value !== "string") return { ok: false };
   return { ok: true, value };
@@ -444,15 +445,17 @@ ofertasRouter.post("/", requireRole("ADMINISTRADOR"), async (req, res) => {
   const desdeCantidad = body.desdeCantidad === undefined || body.desdeCantidad === ""
     ? 1
     : Number(body.desdeCantidad);
-  const descuentoPct = body.descuentoPct === undefined || body.descuentoPct === ""
+  const descuentoPctRaw = body.descuentoPct === undefined || body.descuentoPct === ""
     ? 0
     : Number(body.descuentoPct);
-  const precioUnitario = Number(body.precioUnitario);
+  const precioUnitarioRaw = Number(body.precioUnitario);
   const numeroOferta = Number(body.numeroOferta);
-  if (![desdeCantidad, descuentoPct, precioUnitario, numeroOferta].every(Number.isFinite)) {
+  if (![desdeCantidad, descuentoPctRaw, precioUnitarioRaw, numeroOferta].every(Number.isFinite)) {
     res.status(400).json({ error: "desdeCantidad, descuentoPct, precioUnitario y numeroOferta deben ser numéricos." });
     return;
   }
+  const descuentoPct = roundTo2(descuentoPctRaw) ?? 0;
+  const precioUnitario = roundTo2(precioUnitarioRaw) ?? 0;
   // A diferencia de desdeCantidad/descuentoPct, no tiene default: vacío
   // queda null (proveedor no informó stock), no "cero".
   let cantidadDisponible: number | null = null;

@@ -4,6 +4,7 @@ import { prisma } from "../db.js";
 import { requireRole } from "../middleware/auth.js";
 import { enviarExport, type FilaExport } from "./exportar.js";
 import { imagenUploadSingle, imagenPublicUrl, eliminarArchivoImagen } from "../lib/imagenes.js";
+import { roundTo2 } from "../lib/numeros.js";
 
 export const productosRouter = Router();
 
@@ -307,7 +308,7 @@ function coerceValor(campo: string, value: unknown): { ok: true; value: unknown 
     if (value === null) return { ok: true, value: null };
     const num = Number(value);
     if (!Number.isFinite(num)) return { ok: false };
-    return { ok: true, value: num };
+    return { ok: true, value: roundTo2(num) };
   }
   if (value === null) return { ok: true, value: null };
   if (typeof value !== "string") return { ok: false };
