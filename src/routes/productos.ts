@@ -27,7 +27,7 @@ const COLUMNAS_TEXTO: Record<string, keyof Prisma.ProductoPrecioWhereInput> = {
 };
 // Numéricos con filtro de rango (f_<campo>Min / f_<campo>Max, gte/lte);
 // alicuotaIva queda con igualdad exacta (tiene un puñado de valores fijos).
-const COLUMNAS_NUMERO_RANGO = ["precioNeto", "precioConIva"] as const;
+const COLUMNAS_NUMERO_RANGO = ["precioNeto", "precioConIva", "precioLista", "precioSugerido"] as const;
 const COLUMNAS_NUMERO_EXACTO = ["alicuotaIva"] as const;
 
 // Orden por columna: whitelist explícita clave-de-columna -> orderBy de
@@ -45,6 +45,8 @@ const PRODUCTOS_SORTABLE: Record<
   seccion: (o) => ({ seccion: o }),
   precioNeto: (o) => ({ precioNeto: o }),
   precioConIva: (o) => ({ precioConIva: o }),
+  precioLista: (o) => ({ precioLista: o }),
+  precioSugerido: (o) => ({ precioSugerido: o }),
   alicuotaIva: (o) => ({ alicuotaIva: o }),
   fechaVigencia: (o) => ({ fechaVigencia: o }),
 };
@@ -165,6 +167,8 @@ productosRouter.get("/export", async (req, res) => {
       seccion: true,
       precioNeto: true,
       precioConIva: true,
+      precioLista: true,
+      precioSugerido: true,
       alicuotaIva: true,
       moneda: true,
       unidad: true,
@@ -181,7 +185,9 @@ productosRouter.get("/export", async (req, res) => {
     "Descripción",
     "Sección",
     "Precio neto",
-    "Precio c/IVA",
+    "Precio Neto C/IVA",
+    "Precio Lista",
+    "Precio Sugerido",
     "IVA %",
     "Moneda",
     "Unidad",
@@ -195,7 +201,9 @@ productosRouter.get("/export", async (req, res) => {
     Descripción: p.descripcion,
     Sección: p.seccion,
     "Precio neto": p.precioNeto,
-    "Precio c/IVA": p.precioConIva,
+    "Precio Neto C/IVA": p.precioConIva,
+    "Precio Lista": p.precioLista,
+    "Precio Sugerido": p.precioSugerido,
     "IVA %": p.alicuotaIva,
     Moneda: p.moneda,
     Unidad: p.unidad,
@@ -249,6 +257,8 @@ const SINGLE_EDIT_FIELDS = [
   "seccion",
   "precioNeto",
   "precioConIva",
+  "precioLista",
+  "precioSugerido",
   "alicuotaIva",
   "moneda",
   "unidad",
@@ -260,6 +270,8 @@ const BULK_EDIT_FIELDS = [
   "seccion",
   "precioNeto",
   "precioConIva",
+  "precioLista",
+  "precioSugerido",
   "alicuotaIva",
   "moneda",
   "unidad",
@@ -267,7 +279,13 @@ const BULK_EDIT_FIELDS = [
 ] as const;
 type BulkEditField = (typeof BULK_EDIT_FIELDS)[number];
 
-const CAMPOS_NUMERICOS = new Set<string>(["precioNeto", "precioConIva", "alicuotaIva"]);
+const CAMPOS_NUMERICOS = new Set<string>([
+  "precioNeto",
+  "precioConIva",
+  "precioLista",
+  "precioSugerido",
+  "alicuotaIva",
+]);
 
 // Valida y coerciona un valor según el tipo esperado del campo. Devuelve
 // `{ok:false}` si el valor no es válido para ese campo (400 en el caller).

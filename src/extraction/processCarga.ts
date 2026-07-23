@@ -11,7 +11,7 @@ import {
   normalizeOfertaRow,
 } from "./mappingOfertas.js";
 import { detectOfertaMetadata } from "./ofertaMetadata.js";
-import type { CanonicalField, CanonicalRow, ColumnMapping, ExtractedRow } from "./types.js";
+import type { CanonicalRow, CanonicalRowUpload, ColumnMapping, ExtractedRow } from "./types.js";
 import type {
   OfertaField,
   OfertaColumnMapping,
@@ -101,6 +101,8 @@ async function publicarCanonicalRows(
             seccion: r.seccion,
             precioNeto: r.precio_neto,
             precioConIva: r.precio_con_iva,
+            precioLista: r.precio_lista,
+            precioSugerido: r.precio_sugerido,
             alicuotaIva: r.alicuota_iva,
             moneda: r.moneda ?? "ARS",
             unidad: r.unidad,
@@ -369,7 +371,7 @@ export async function aprobarMapeoYPublicar(
 export async function confirmarCargaYPublicar(
   cargaId: number,
   mapping: ColumnMapping,
-  filasFinales: Array<Partial<Record<CanonicalField, unknown>> & { raw_data?: unknown }>
+  filasFinales: Array<CanonicalRowUpload>
 ): Promise<number> {
   const carga = await prisma.carga.findUniqueOrThrow({ where: { id: cargaId } });
   if (!carga.proveedorId) throw new Error("La carga no tiene proveedor asociado.");

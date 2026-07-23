@@ -15,7 +15,7 @@ import { detectarAdvertenciasOfertas } from "../extraction/advertenciasOfertas.j
 import {
   CANONICAL_FIELDS,
   type ColumnMapping,
-  type CanonicalField,
+  type CanonicalRowUpload,
   type ExtractedRow,
 } from "../extraction/types.js";
 import {
@@ -294,7 +294,7 @@ uploadsRouter.post("/:id/confirmar", async (req, res) => {
         : await confirmarCargaYPublicar(
             id,
             parsed.mapping as ColumnMapping,
-            filas as Array<Partial<Record<CanonicalField, unknown>> & { raw_data?: unknown }>
+            filas as Array<CanonicalRowUpload>
           );
     const cargaFinal = await prisma.carga.findUnique({ where: { id }, include: { proveedor: true } });
     res.json({ carga: cargaFinal, publicados });

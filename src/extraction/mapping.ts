@@ -5,6 +5,7 @@ import {
   CANONICAL_FIELDS,
   type CanonicalField,
   type CanonicalRow,
+  type CanonicalRowUpload,
   type ColumnMapping,
   type ExtractedRow,
 } from "./types.js";
@@ -102,6 +103,7 @@ Reglas:
 - "sku_proveedor" es el código del producto tal como lo identifica el proveedor.
 - "sku_interno" es un código interno propio (si existe una columna separada para eso).
 - "precio_neto" es el precio SIN IVA. "precio_con_iva" es CON IVA. "alicuota_iva" es el % de IVA (21, 10.5, etc.), no un monto.
+- "precio_lista" es el precio de lista/sugerido de fábrica del proveedor, no necesariamente el que paga el cliente — distinto de "precio_neto" (sin IVA) y "precio_con_iva" (con IVA).
 - Un mismo campo destino no debería repetirse en dos columnas distintas salvo que genuinamente sea así en los datos.
 - Si no estás seguro de una columna, dejala en null (mejor no mapear que mapear mal precios).
 
@@ -182,9 +184,7 @@ export function toNumberOrNull(value: unknown): number | null {
 // confirmarCargaYPublicar en processCarga.ts (con filas ya editadas a mano
 // por un humano en el frontend) — mismo parseo tolerante en los dos casos,
 // sin duplicarlo.
-export function normalizeCanonicalRow(
-  input: Partial<Record<CanonicalField, unknown>> & { raw_data?: unknown }
-): CanonicalRow {
+export function normalizeCanonicalRow(input: CanonicalRowUpload): CanonicalRow {
   const rawData =
     input.raw_data && typeof input.raw_data === "object" && !Array.isArray(input.raw_data)
       ? (input.raw_data as Record<string, unknown>)
@@ -198,10 +198,14 @@ export function normalizeCanonicalRow(
     seccion: toStringOrNull(input.seccion),
     precio_neto: toNumberOrNull(input.precio_neto),
     precio_con_iva: toNumberOrNull(input.precio_con_iva),
+    precio_lista: toNumberOrNull(input.precio_lista),
     alicuota_iva: toNumberOrNull(input.alicuota_iva),
     moneda: toStringOrNull(input.moneda) ?? "ARS",
     unidad: toStringOrNull(input.unidad),
     fecha_vigencia: toStringOrNull(input.fecha_vigencia),
+    // No es un CanonicalField (no se mapea desde una columna del archivo):
+    // llega ya calculado desde ReviewTable.tsx a partir del % de ganancia.
+    precio_sugerido: toNumberOrNull(input.precio_sugerido),
     raw_data: rawData,
   };
 }
