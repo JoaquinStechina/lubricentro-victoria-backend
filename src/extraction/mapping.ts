@@ -203,8 +203,9 @@ export function normalizeCanonicalRow(input: CanonicalRowUpload): CanonicalRow {
     moneda: toStringOrNull(input.moneda) ?? "ARS",
     unidad: toStringOrNull(input.unidad),
     fecha_vigencia: toStringOrNull(input.fecha_vigencia),
-    // No es un CanonicalField (no se mapea desde una columna del archivo):
-    // llega ya calculado desde ReviewTable.tsx a partir del % de ganancia.
+    // Ninguno de los dos es un CanonicalField (no se mapean desde una
+    // columna del archivo): llegan ya calculados desde ReviewTable.tsx.
+    precio_lista_con_iva: toNumberOrNull(input.precio_lista_con_iva),
     precio_sugerido: toNumberOrNull(input.precio_sugerido),
     raw_data: rawData,
   };

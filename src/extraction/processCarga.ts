@@ -102,6 +102,7 @@ async function publicarCanonicalRows(
             precioNeto: r.precio_neto,
             precioConIva: r.precio_con_iva,
             precioLista: r.precio_lista,
+            precioListaConIva: r.precio_lista_con_iva,
             precioSugerido: r.precio_sugerido,
             alicuotaIva: r.alicuota_iva,
             moneda: r.moneda ?? "ARS",

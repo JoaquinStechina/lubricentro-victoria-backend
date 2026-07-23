@@ -42,18 +42,28 @@ export type CanonicalRow = {
   moneda: string | null;
   unidad: string | null;
   fecha_vigencia: string | null;
-  // Calculado en la pantalla de revisión (ReviewTable.tsx) a partir de
-  // precio_con_iva * porcentaje_ganancia, nunca mapeado desde una columna del
-  // archivo — por eso no forma parte de CANONICAL_FIELDS/CanonicalField.
+  // Calculados en la pantalla de revisión (ReviewTable.tsx), nunca mapeados
+  // desde una columna del archivo — por eso no forman parte de
+  // CANONICAL_FIELDS/CanonicalField:
+  // - precio_con_iva ya es un CanonicalField mapeable, pero si además se
+  //   mapea la columna "IVA" (alicuota_iva), ReviewTable.tsx lo recalcula
+  //   como precio_neto + precio_neto * alicuota_iva / 100 (salvo que el
+  //   usuario haya corregido esa celda a mano).
+  // - precio_lista_con_iva es igual pero a partir de precio_lista, y nunca
+  //   se mapea directamente (no tiene sentido sin precio_lista + IVA).
+  precio_lista_con_iva: number | null;
+  // Calculado a partir de precio_con_iva * porcentaje_ganancia.
   precio_sugerido: number | null;
   raw_data: Record<string, unknown>;
 };
 
 // Shape que acepta confirmarCargaYPublicar (processCarga.ts) y
 // normalizeCanonicalRow: los campos canónicos normales (mapeables desde una
-// columna) más precio_sugerido, que viaja igual desde el frontend pero nunca
-// es un CanonicalField (no aparece en el selector "Mapear columna a...").
+// columna) más los calculados en la pantalla de revisión (precio_sugerido,
+// precio_lista_con_iva), que viajan igual desde el frontend pero nunca son
+// un CanonicalField (no aparecen en el selector "Mapear columna a...").
 export type CanonicalRowUpload = Partial<Record<CanonicalField, unknown>> & {
   raw_data?: unknown;
   precio_sugerido?: unknown;
+  precio_lista_con_iva?: unknown;
 };

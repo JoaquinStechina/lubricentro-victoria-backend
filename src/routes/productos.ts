@@ -27,7 +27,13 @@ const COLUMNAS_TEXTO: Record<string, keyof Prisma.ProductoPrecioWhereInput> = {
 };
 // Numéricos con filtro de rango (f_<campo>Min / f_<campo>Max, gte/lte);
 // alicuotaIva queda con igualdad exacta (tiene un puñado de valores fijos).
-const COLUMNAS_NUMERO_RANGO = ["precioNeto", "precioConIva", "precioLista", "precioSugerido"] as const;
+const COLUMNAS_NUMERO_RANGO = [
+  "precioNeto",
+  "precioConIva",
+  "precioLista",
+  "precioListaConIva",
+  "precioSugerido",
+] as const;
 const COLUMNAS_NUMERO_EXACTO = ["alicuotaIva"] as const;
 
 // Orden por columna: whitelist explícita clave-de-columna -> orderBy de
@@ -46,6 +52,7 @@ const PRODUCTOS_SORTABLE: Record<
   precioNeto: (o) => ({ precioNeto: o }),
   precioConIva: (o) => ({ precioConIva: o }),
   precioLista: (o) => ({ precioLista: o }),
+  precioListaConIva: (o) => ({ precioListaConIva: o }),
   precioSugerido: (o) => ({ precioSugerido: o }),
   alicuotaIva: (o) => ({ alicuotaIva: o }),
   fechaVigencia: (o) => ({ fechaVigencia: o }),
@@ -168,6 +175,7 @@ productosRouter.get("/export", async (req, res) => {
       precioNeto: true,
       precioConIva: true,
       precioLista: true,
+      precioListaConIva: true,
       precioSugerido: true,
       alicuotaIva: true,
       moneda: true,
@@ -187,6 +195,7 @@ productosRouter.get("/export", async (req, res) => {
     "Precio neto",
     "Precio Neto C/IVA",
     "Precio Lista",
+    "Precio Lista C/IVA",
     "Precio Sugerido",
     "IVA %",
     "Moneda",
@@ -203,6 +212,7 @@ productosRouter.get("/export", async (req, res) => {
     "Precio neto": p.precioNeto,
     "Precio Neto C/IVA": p.precioConIva,
     "Precio Lista": p.precioLista,
+    "Precio Lista C/IVA": p.precioListaConIva,
     "Precio Sugerido": p.precioSugerido,
     "IVA %": p.alicuotaIva,
     Moneda: p.moneda,
@@ -258,6 +268,7 @@ const SINGLE_EDIT_FIELDS = [
   "precioNeto",
   "precioConIva",
   "precioLista",
+  "precioListaConIva",
   "precioSugerido",
   "alicuotaIva",
   "moneda",
@@ -271,6 +282,7 @@ const BULK_EDIT_FIELDS = [
   "precioNeto",
   "precioConIva",
   "precioLista",
+  "precioListaConIva",
   "precioSugerido",
   "alicuotaIva",
   "moneda",
@@ -283,6 +295,7 @@ const CAMPOS_NUMERICOS = new Set<string>([
   "precioNeto",
   "precioConIva",
   "precioLista",
+  "precioListaConIva",
   "precioSugerido",
   "alicuotaIva",
 ]);

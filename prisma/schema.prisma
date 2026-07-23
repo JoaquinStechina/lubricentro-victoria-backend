@@ -49,38 +49,39 @@ model Proveedor {
 // destructivo de precios: cada carga nueva inserta filas con su propia
 // fechaVigencia para poder auditar variaciones en el tiempo.
 model ProductoPrecio {
-  id             Int       @id @default(autoincrement())
-  proveedorId    Int
-  proveedor      Proveedor @relation(fields: [proveedorId], references: [id])
-  marca          String?
-  skuProveedor   String?
-  skuInterno     String?
-  descripcion    String?   @db.Text
-  seccion        String?
-  precioNeto     Float?
-  precioConIva   Float?
-  precioLista    Float?
-  precioSugerido Float?
-  alicuotaIva    Float?
-  moneda         String    @default("ARS")
-  unidad         String?
-  fechaVigencia  String?
-  imagenUrl      String?
+  id                Int       @id @default(autoincrement())
+  proveedorId       Int
+  proveedor         Proveedor @relation(fields: [proveedorId], references: [id])
+  marca             String?
+  skuProveedor      String?
+  skuInterno        String?
+  descripcion       String?   @db.Text
+  seccion           String?
+  precioNeto        Float?
+  precioConIva      Float?
+  precioLista       Float?
+  precioListaConIva Float?
+  precioSugerido    Float?
+  alicuotaIva       Float?
+  moneda            String    @default("ARS")
+  unidad            String?
+  fechaVigencia     String?
+  imagenUrl         String?
   // true = la fila mas reciente conocida para este proveedor+marca+SKU.
   // Al confirmar una carga nueva, la fila anterior de ese mismo
   // proveedor+marca+SKU se marca en false (ver publicarCanonicalRows en
   // processCarga.ts) - nunca se borra ni se pisa, solo se deja de considerar
   // vigente. Filas sin skuProveedor no tienen forma confiable de matchear
   // "el mismo producto" y quedan siempre en true (no se tocan).
-  vigente        Boolean   @default(true)
+  vigente           Boolean   @default(true)
   // Borrado lógico: true = oculta de GET /api/productos y de la UI. Nunca
   // se borra la fila físicamente. Independiente de `vigente` (que tiene
   // otro significado, ver arriba).
-  eliminado      Boolean   @default(false)
-  rawData        Json?
-  cargaId        Int?
-  carga          Carga?    @relation(fields: [cargaId], references: [id])
-  createdAt      DateTime  @default(now())
+  eliminado         Boolean   @default(false)
+  rawData           Json?
+  cargaId           Int?
+  carga             Carga?    @relation(fields: [cargaId], references: [id])
+  createdAt         DateTime  @default(now())
 
   @@index([proveedorId])
   @@index([skuInterno])
