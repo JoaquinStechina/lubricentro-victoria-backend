@@ -9,12 +9,13 @@
 // portal real (ver spec, sección Testing). Los helpers puros (decidir si
 // hay que crear Carga, armar nombre de archivo, armar los datos de la
 // Carga) sí están testeados en abcAutoDescargaHelpers.test.ts.
-import { chromium, type Page } from "playwright";
+import { chromium, type Locator, type Page } from "playwright";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { AutoDescargaMarca, Proveedor } from "@prisma/client";
 import { prisma } from "../db.js";
+import { extractExcelWithFallback, combineTables } from "../extraction/excel.js";
 import { procesarCarga } from "../extraction/processCarga.js";
 import { UPLOADS_DIR } from "../routes/uploads.js";
 import {
@@ -96,36 +97,75 @@ async function iniciarSesion(page: Page): Promise<void> {
   await page.waitForURL((url) => !url.pathname.startsWith("/account/login"), { timeout: 15000 });
 }
 
+// El filtro de la tabla de "Listas de Precios" tarda un tiempo variable en
+// aplicarse tras el Enter (confirmado a mano: 500ms fijos no alcanzaban en
+// una sesión recién logueada — el filtro tardó ~2.5s esa vez). Por eso se
+// hace polling en vez de una espera fija: se reintenta leer la tabla hasta
+// encontrar exactamente una fila (sin contar la fila "COMPLETA", que queda
+// siempre pinneada arriba sin importar el filtro) o hasta agotar el timeout.
+async function esperarFilaMarca(page: Page, marcaEsperada: string): Promise<Locator> {
+  const filasTabla = page.locator("table tbody tr");
+  const timeoutMs = 10000;
+  const intervaloMs = 300;
+  const inicio = Date.now();
+  while (Date.now() - inicio < timeoutMs) {
+    const total = await filasTabla.count();
+    const indicesCandidatos: number[] = [];
+    for (let i = 0; i < total; i++) {
+      const texto = (await filasTabla.nth(i).locator("td").nth(1).innerText()).trim();
+      if (texto === "COMPLETA") continue;
+      if (texto === marcaEsperada) indicesCandidatos.push(i);
+    }
+    if (indicesCandidatos.length === 1) return filasTabla.nth(indicesCandidatos[0]);
+    if (indicesCandidatos.length > 1) {
+      throw new Error(
+        `marca no encontrada (${indicesCandidatos.length} coincidencias exactas para "${marcaEsperada}")`
+      );
+    }
+    await page.waitForTimeout(intervaloMs);
+  }
+  throw new Error(`marca no encontrada (0 coincidencias exactas para "${marcaEsperada}")`);
+}
+
+// Escribe la marca en el buscador y confirma con Enter. El buscador no
+// reacciona a fill(): hace falta tipeo real (pressSequentially). Además, si
+// el Enter se manda inmediatamente después de tipear, el propio frontend de
+// ABC pierde una carrera interna entre el chip visual del filtro y el
+// estado que arma el pedido a su API: manda "_filters={}" sin el término de
+// búsqueda (confirmado inspeccionando el tráfico de red contra el portal
+// real — devuelve la lista completa sin filtrar, o un 400 en el reintento).
+// Esperar un momento entre tipear y Enter le da tiempo a ese estado a
+// asentarse, pero sigue siendo un margen heurístico contra un sitio de
+// terceros (confirmado a mano: a veces no alcanza) — por eso
+// buscarFilaMarcaConReintento reintenta la secuencia completa una vez más
+// si la primera pasada no encuentra la fila, en vez de agrandar el número
+// a ciegas.
+async function buscarMarca(page: Page, marca: string): Promise<void> {
+  const buscador = page.getByRole("searchbox", { name: "Buscar..." });
+  await buscador.fill("");
+  await buscador.pressSequentially(marca, { delay: 20 });
+  await page.waitForTimeout(800);
+  await buscador.press("Enter");
+}
+
+async function buscarFilaMarcaConReintento(page: Page, marcaEsperada: string): Promise<Locator> {
+  await buscarMarca(page, marcaEsperada);
+  try {
+    return await esperarFilaMarca(page, marcaEsperada);
+  } catch (err) {
+    console.error(
+      `Auto-descarga ABC: no se encontró "${marcaEsperada}" en el primer intento, reintentando:`,
+      err instanceof Error ? err.message : String(err)
+    );
+    await buscarMarca(page, marcaEsperada);
+    return esperarFilaMarca(page, marcaEsperada);
+  }
+}
+
 async function descargarYProcesarMarca(page: Page, fila: FilaConProveedor): Promise<void> {
   await page.goto(PORTAL_URL);
 
-  // El buscador de la tabla de "Listas de Precios" no reacciona a fill():
-  // hace falta tipeo real (pressSequentially) + Enter para que dispare el
-  // filtro — confirmado a mano contra el portal real.
-  const buscador = page.getByRole("searchbox", { name: "Buscar..." });
-  await buscador.fill("");
-  await buscador.pressSequentially(fila.marca, { delay: 20 });
-  await buscador.press("Enter");
-  await page.waitForTimeout(500);
-
-  // La fila "COMPLETA" (catálogo completo) queda siempre pinneada arriba,
-  // sin importar el filtro — se excluye al buscar la marca exacta.
-  const marcaEsperada = fila.marca.trim();
-  const filasTabla = page.locator("table tbody tr");
-  const total = await filasTabla.count();
-  const indicesCandidatos: number[] = [];
-  for (let i = 0; i < total; i++) {
-    const texto = (await filasTabla.nth(i).locator("td").nth(1).innerText()).trim();
-    if (texto === "COMPLETA") continue;
-    if (texto === marcaEsperada) indicesCandidatos.push(i);
-  }
-  if (indicesCandidatos.length !== 1) {
-    throw new Error(
-      `marca no encontrada (${indicesCandidatos.length} coincidencias exactas para "${marcaEsperada}")`
-    );
-  }
-
-  const filaEncontrada = filasTabla.nth(indicesCandidatos[0]);
+  const filaEncontrada = await buscarFilaMarcaConReintento(page, fila.marca.trim());
   const [download] = await Promise.all([
     page.waitForEvent("download", { timeout: 30000 }),
     filaEncontrada.locator("td").nth(2).locator("button").click(),
@@ -133,7 +173,27 @@ async function descargarYProcesarMarca(page: Page, fila: FilaConProveedor): Prom
   const rutaTemporal = await download.path();
   if (!rutaTemporal) throw new Error("la descarga no generó un archivo");
   const buffer = fs.readFileSync(rutaTemporal);
-  const hash = crypto.createHash("sha256").update(buffer).digest("hex");
+
+  // El .xlsx que exporta el portal trae metadata interna (timestamp/GUID
+  // de generación) que cambia en cada descarga aunque los datos sean
+  // exactamente los mismos — confirmado descargando la misma marca dos
+  // veces seguidas: el contenido parseado salió idéntico fila por fila,
+  // pero el hash del archivo crudo fue distinto. Por eso se hashea el
+  // contenido ya extraído (headers+filas), no los bytes del archivo.
+  //
+  // `__hoja` (agregado por combineTables, ver excel.ts) guarda el nombre
+  // de la hoja de origen — y ABC nombra esa hoja con un timestamp propio
+  // ("ABC_AP_<epoch>.xlsx") que también cambia en cada descarga aunque los
+  // precios sean los mismos. Se excluye del hash junto con el archivo
+  // crudo; `__seccion` sí se conserva porque refleja agrupación real de
+  // datos, no un artefacto de exportación.
+  const tablas = await extractExcelWithFallback(buffer);
+  const { headers, rows } = combineTables(tablas);
+  const rowsParaHash = rows.map(({ __hoja, ...resto }) => resto);
+  const hash = crypto
+    .createHash("sha256")
+    .update(JSON.stringify({ headers, rows: rowsParaHash }))
+    .digest("hex");
 
   const accion = decidirAccion(hash, fila.ultimoHashArchivo);
   if (accion === "sin_cambios") {
