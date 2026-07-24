@@ -6,6 +6,7 @@ import {
   datosNuevaCarga,
   truncarMensaje,
   MAX_LARGO_RESULTADO,
+  hashContenidoExtraido,
 } from "./abcAutoDescargaHelpers.js";
 
 test("decidirAccion: hash igual al anterior -> sin_cambios", () => {
@@ -70,4 +71,33 @@ test("truncarMensaje: con el prefijo más largo ('error: login falló - '), el r
   const mensaje = "x".repeat(500);
   const resultadoFinal = `${prefijo}${truncarMensaje(mensaje)}`;
   assert.equal(resultadoFinal.length, 191);
+});
+
+test("hashContenidoExtraido: mismo contenido con __hoja distinto -> mismo hash", () => {
+  const headers = ["CODIGO", "MARCA"];
+  const rowsA = [{ __hoja: "ABC_AP_1111111111111.xlsx", __seccion: null, CODIGO: "X1", MARCA: "MANN" }];
+  const rowsB = [{ __hoja: "ABC_AP_2222222222222.xlsx", __seccion: null, CODIGO: "X1", MARCA: "MANN" }];
+  assert.equal(hashContenidoExtraido(headers, rowsA), hashContenidoExtraido(headers, rowsB));
+});
+
+test("hashContenidoExtraido: mismo __hoja pero __seccion distinto -> hash distinto", () => {
+  const headers = ["CODIGO", "MARCA"];
+  const rowsA = [{ __hoja: "ABC_AP_1111111111111.xlsx", __seccion: "MANN PESADO", CODIGO: "X1", MARCA: "MANN" }];
+  const rowsB = [{ __hoja: "ABC_AP_1111111111111.xlsx", __seccion: "MANN LIVIANO", CODIGO: "X1", MARCA: "MANN" }];
+  assert.notEqual(hashContenidoExtraido(headers, rowsA), hashContenidoExtraido(headers, rowsB));
+});
+
+test("hashContenidoExtraido: un precio distinto entre filas por lo demás iguales -> hash distinto", () => {
+  const headers = ["CODIGO", "PRECIO"];
+  const rowsA = [{ __hoja: "h.xlsx", __seccion: null, CODIGO: "X1", PRECIO: 100 }];
+  const rowsB = [{ __hoja: "h.xlsx", __seccion: null, CODIGO: "X1", PRECIO: 101 }];
+  assert.notEqual(hashContenidoExtraido(headers, rowsA), hashContenidoExtraido(headers, rowsB));
+});
+
+test("hashContenidoExtraido: sin filas devuelve un hash definido y estable", () => {
+  const hash1 = hashContenidoExtraido(["CODIGO"], []);
+  const hash2 = hashContenidoExtraido(["CODIGO"], []);
+  assert.equal(typeof hash1, "string");
+  assert.ok(hash1.length > 0);
+  assert.equal(hash1, hash2);
 });

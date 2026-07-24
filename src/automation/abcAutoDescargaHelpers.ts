@@ -3,6 +3,24 @@
 // no hay forma de mockear un sitio de terceros en CI, se verifica a mano
 // contra el portal real — ver el spec, sección Testing).
 
+import crypto from "node:crypto";
+import type { ExtractedRow } from "../extraction/types.js";
+
+// El .xlsx que exporta el portal trae metadata interna (nombre de hoja con
+// timestamp propio, ej. "ABC_AP_1784913938678.xlsx") que cambia en cada
+// descarga aunque los precios sean exactamente los mismos — confirmado
+// descargando la misma marca dos veces seguidas y comparando el contenido
+// parseado (idéntico fila por fila) contra el hash del archivo crudo
+// (distinto). Por eso se hashea el contenido ya extraído (headers+filas),
+// no los bytes del archivo, y se excluye `__hoja` (que combineTables llena
+// con ese mismo nombre de hoja variable) de cada fila antes de hashear.
+// `__seccion` sí se conserva: es agrupación real derivada del contenido de
+// la hoja, no un artefacto de exportación (ver excel.ts).
+export function hashContenidoExtraido(headers: string[], rows: ExtractedRow[]): string {
+  const rowsParaHash = rows.map(({ __hoja, ...resto }) => resto);
+  return crypto.createHash("sha256").update(JSON.stringify({ headers, rows: rowsParaHash })).digest("hex");
+}
+
 export function decidirAccion(
   hashNuevo: string,
   hashAnterior: string | null

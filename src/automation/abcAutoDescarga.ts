@@ -10,7 +10,6 @@
 // hay que crear Carga, armar nombre de archivo, armar los datos de la
 // Carga) sí están testeados en abcAutoDescargaHelpers.test.ts.
 import { chromium, type Locator, type Page } from "playwright";
-import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import type { AutoDescargaMarca, Proveedor } from "@prisma/client";
@@ -23,6 +22,7 @@ import {
   nombreArchivoDescarga,
   datosNuevaCarga,
   truncarMensaje,
+  hashContenidoExtraido,
 } from "./abcAutoDescargaHelpers.js";
 
 const PORTAL_URL = "https://www.abc-sa.com.ar/prices-lists-dashboard";
@@ -174,26 +174,13 @@ async function descargarYProcesarMarca(page: Page, fila: FilaConProveedor): Prom
   if (!rutaTemporal) throw new Error("la descarga no generó un archivo");
   const buffer = fs.readFileSync(rutaTemporal);
 
-  // El .xlsx que exporta el portal trae metadata interna (timestamp/GUID
-  // de generación) que cambia en cada descarga aunque los datos sean
-  // exactamente los mismos — confirmado descargando la misma marca dos
-  // veces seguidas: el contenido parseado salió idéntico fila por fila,
-  // pero el hash del archivo crudo fue distinto. Por eso se hashea el
-  // contenido ya extraído (headers+filas), no los bytes del archivo.
-  //
-  // `__hoja` (agregado por combineTables, ver excel.ts) guarda el nombre
-  // de la hoja de origen — y ABC nombra esa hoja con un timestamp propio
-  // ("ABC_AP_<epoch>.xlsx") que también cambia en cada descarga aunque los
-  // precios sean los mismos. Se excluye del hash junto con el archivo
-  // crudo; `__seccion` sí se conserva porque refleja agrupación real de
-  // datos, no un artefacto de exportación.
+  // Se hashea el contenido ya extraído (headers+filas), no los bytes del
+  // archivo — el .xlsx que exporta el portal trae metadata interna que
+  // cambia en cada descarga aunque los datos sean los mismos (ver
+  // hashContenidoExtraido en abcAutoDescargaHelpers.ts para el detalle).
   const tablas = await extractExcelWithFallback(buffer);
   const { headers, rows } = combineTables(tablas);
-  const rowsParaHash = rows.map(({ __hoja, ...resto }) => resto);
-  const hash = crypto
-    .createHash("sha256")
-    .update(JSON.stringify({ headers, rows: rowsParaHash }))
-    .digest("hex");
+  const hash = hashContenidoExtraido(headers, rows);
 
   const accion = decidirAccion(hash, fila.ultimoHashArchivo);
   if (accion === "sin_cambios") {
