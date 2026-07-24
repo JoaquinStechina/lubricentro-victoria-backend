@@ -25,6 +25,7 @@
     "multer": "^2.2.0",
     "openai": "^6.48.0",
     "pdf-to-img": "^6.2.0",
+    "playwright": "^1.61.1",
     "xlsx": "https://cdn.sheetjs.com/xlsx-latest/xlsx-latest.tgz"
   },
   "devDependencies": {
