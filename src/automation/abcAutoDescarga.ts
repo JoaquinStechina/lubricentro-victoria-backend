@@ -17,21 +17,15 @@ import type { AutoDescargaMarca, Proveedor } from "@prisma/client";
 import { prisma } from "../db.js";
 import { procesarCarga } from "../extraction/processCarga.js";
 import { UPLOADS_DIR } from "../routes/uploads.js";
-import { decidirAccion, nombreArchivoDescarga, datosNuevaCarga } from "./abcAutoDescargaHelpers.js";
+import {
+  decidirAccion,
+  nombreArchivoDescarga,
+  datosNuevaCarga,
+  truncarMensaje,
+} from "./abcAutoDescargaHelpers.js";
 
 const PORTAL_URL = "https://www.abc-sa.com.ar/prices-lists-dashboard";
 const LOGIN_URL = "https://www.abc-sa.com.ar/account/login";
-
-// ultimoResultado es VARCHAR(191); los errores de Playwright suelen traer
-// un "Call log:" de varias líneas que lo excede largo, lo que haría fallar
-// el propio update() y (en el loop por marca) tumbaría la corrida entera.
-// 170 deja margen bajo VARCHAR(191) incluso para el prefijo más largo,
-// "error: login falló - " (21 caracteres).
-const MAX_LARGO_RESULTADO = 170;
-
-function truncarMensaje(mensaje: string): string {
-  return mensaje.length > MAX_LARGO_RESULTADO ? mensaje.slice(0, MAX_LARGO_RESULTADO) : mensaje;
-}
 
 type FilaConProveedor = AutoDescargaMarca & { proveedor: Proveedor };
 

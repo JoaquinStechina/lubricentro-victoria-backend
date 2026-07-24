@@ -17,6 +17,18 @@ export function nombreArchivoDescarga(marca: string, timestamp: number): string 
   return `${timestamp}_ABC_${marcaSlug}.xlsx`;
 }
 
+// ultimoResultado es VARCHAR(191); los errores de Playwright suelen traer
+// un "Call log:" de varias líneas que lo excede largo, lo que haría fallar
+// el propio update() y (en el loop por marca) tumbaría la corrida entera.
+// 170 es el máximo que deja el string final dentro de VARCHAR(191) incluso
+// con el prefijo más largo, "error: login falló - " (21 caracteres): es un
+// límite exacto, no un margen.
+export const MAX_LARGO_RESULTADO = 170;
+
+export function truncarMensaje(mensaje: string): string {
+  return mensaje.length > MAX_LARGO_RESULTADO ? mensaje.slice(0, MAX_LARGO_RESULTADO) : mensaje;
+}
+
 export type FilaParaCarga = {
   proveedorId: number;
   marca: string;
