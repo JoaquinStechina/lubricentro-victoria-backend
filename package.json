@@ -10,6 +10,7 @@
     "test": "tsx --test src/**/*.test.ts",
     "seed": "tsx scripts/seed-from-json.ts",
     "seed:sysadmin": "tsx scripts/seed-sysadmin.ts",
+    "auto-descargas:abc": "tsx scripts/run-auto-descargas-abc.ts",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:generate": "prisma generate"
