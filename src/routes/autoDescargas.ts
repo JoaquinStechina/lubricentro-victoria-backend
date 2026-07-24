@@ -109,5 +109,13 @@ autoDescargasRouter.post("/:id/probar", async (req, res) => {
     where: { id },
     include: { proveedor: true },
   });
+  // La fila se pudo haber borrado mientras corría la prueba (~10-20s): nunca
+  // devolver 200 con body null, para que el frontend no reciba un objeto
+  // inesperado (ver AutoDescargasView.tsx, que hace fila.id sobre la
+  // respuesta).
+  if (!fila) {
+    res.status(404).json({ error: "La fila se eliminó mientras se probaba la descarga." });
+    return;
+  }
   res.json(fila);
 });
