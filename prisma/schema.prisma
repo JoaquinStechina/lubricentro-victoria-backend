@@ -37,12 +37,34 @@ model Proveedor {
   nombre    String   @unique
   createdAt DateTime @default(now())
 
-  productos ProductoPrecio[]
-  ofertas   Oferta[]
-  mapeos    MapeoColumna[]
-  cargas    Carga[]
+  productos      ProductoPrecio[]
+  ofertas        Oferta[]
+  mapeos         MapeoColumna[]
+  cargas         Carga[]
+  autoDescargas  AutoDescargaMarca[]
 
   @@map("proveedores")
+}
+
+// Marcas de un proveedor que se auto-descargan por Playwright (ver
+// backend/src/automation/abcAutoDescarga.ts). Genérico por proveedorId por si
+// en el futuro hay otro proveedor con portal propio, aunque hoy solo se usa
+// con ABC (ver docs/superpowers/specs/2026-07-23-abc-auto-descarga-marcas-design.md).
+model AutoDescargaMarca {
+  id                 Int       @id @default(autoincrement())
+  proveedorId        Int
+  proveedor          Proveedor @relation(fields: [proveedorId], references: [id])
+  marca              String
+  activo             Boolean   @default(true)
+  porcentajeGanancia Float?
+  ultimoHashArchivo  String?
+  ultimaCorridaEn    DateTime?
+  ultimoResultado    String?
+  ultimaCargaId      Int?
+  createdAt          DateTime  @default(now())
+
+  @@unique([proveedorId, marca])
+  @@map("auto_descargas_marca")
 }
 
 // Schema canónico productos_precios (ver contexto.md). No se hace UPDATE
@@ -173,6 +195,11 @@ model Carga {
   // guarda aparte de fecha_hasta=null para poder distinguir "el usuario lo
   // marcó a propósito" de "la IA no encontró ninguna fecha".
   sinFechaLimite Boolean   @default(false)
+  // Copiado de AutoDescargaMarca.porcentajeGanancia al crear la Carga desde
+  // el worker de auto-descarga; null para cargas manuales o de otros
+  // proveedores. ReviewTable.tsx lo usa para prellenar el % de ganancia en
+  // vez de arrancar vacío (ver docs/superpowers/specs/2026-07-23-abc-auto-descarga-marcas-design.md).
+  porcentajeGananciaDefault Float?
   // pendiente | procesando | revision_pendiente | confirmacion_pendiente |
   // completado | error. revision_pendiente = mapeo sugerido por IA sin
   // aprobar (proveedor nuevo o headers distintos); confirmacion_pendiente =
