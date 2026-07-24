@@ -12,6 +12,7 @@ WORKDIR /app
 ENV NODE_ENV=production
 COPY --from=builder /app/package*.json ./
 RUN npm ci --omit=dev
+RUN npx playwright install --with-deps chromium
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
 RUN npx prisma generate
