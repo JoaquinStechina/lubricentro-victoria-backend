@@ -9,6 +9,7 @@ import { productosRouter } from "./routes/productos.js";
 import { ofertasRouter } from "./routes/ofertas.js";
 import { authRouter } from "./routes/auth.js";
 import { usuariosRouter } from "./routes/usuarios.js";
+import { autoDescargasRouter } from "./routes/autoDescargas.js";
 import { requireAuth } from "./middleware/auth.js";
 import { IMAGENES_DIR } from "./lib/imagenes.js";
 
@@ -42,6 +43,7 @@ app.use("/api/proveedores", requireAuth, proveedoresRouter);
 app.use("/api/productos", requireAuth, productosRouter);
 app.use("/api/ofertas", requireAuth, ofertasRouter);
 app.use("/api/usuarios", requireAuth, usuariosRouter);
+app.use("/api/auto-descargas", requireAuth, autoDescargasRouter);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
