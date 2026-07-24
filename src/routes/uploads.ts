@@ -25,7 +25,7 @@ import {
   type OfertaMetadata,
 } from "../extraction/typesOfertas.js";
 
-const UPLOADS_DIR = path.join(process.cwd(), "uploads");
+export const UPLOADS_DIR = path.join(process.cwd(), "uploads");
 fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 
 const EXT_TO_TIPO: Record<string, string> = {
