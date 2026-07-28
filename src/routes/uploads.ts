@@ -69,7 +69,8 @@ uploadsRouter.use(requireRole("ADMINISTRADOR"));
 // tenga entradas: una carga con todos los valores tipeados a mano y ninguna
 // columna mapeada es válida para /confirmar (no lo es para /aprobar-mapeo,
 // que chequea eso aparte).
-function parseMapeoBody(
+// Ofertas: un destino por columna (sin cambios, no admite uno-a-muchos).
+function parseMapeoBodyOferta(
   body: unknown,
   camposValidos: readonly string[]
 ): { mapping: Record<string, string> } | { error: string } {
@@ -81,6 +82,26 @@ function parseMapeoBody(
     if (camposValidos.includes(destino as string)) {
       mapping[columna] = destino as string;
     }
+  }
+  return { mapping };
+}
+
+// Catálogo: cada columna admite un destino solo o una lista (mapeo
+// uno-a-muchos, ver mapping.ts) — acepta ambas formas por columna en el
+// body y siempre normaliza a array.
+function parseMapeoBodyCatalogo(
+  body: unknown,
+  camposValidos: readonly string[]
+): { mapping: Record<string, string[]> } | { error: string } {
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { error: "Falta 'mapeo' (objeto columnaOrigen -> campoDestino) en el body." };
+  }
+  const mapping: Record<string, string[]> = {};
+  for (const [columna, destino] of Object.entries(body)) {
+    const destinos = (Array.isArray(destino) ? destino : [destino]).filter(
+      (d): d is string => typeof d === "string" && camposValidos.includes(d)
+    );
+    if (destinos.length > 0) mapping[columna] = destinos;
   }
   return { mapping };
 }
@@ -230,9 +251,12 @@ uploadsRouter.post("/:id/aprobar-mapeo", async (req, res) => {
     res.status(404).json({ error: "Carga no encontrada." });
     return;
   }
-  const campos = carga.tipoDatos === "oferta" ? CANONICAL_FIELDS_OFERTAS : CANONICAL_FIELDS;
+  const esOferta = carga.tipoDatos === "oferta";
+  const campos = esOferta ? CANONICAL_FIELDS_OFERTAS : CANONICAL_FIELDS;
 
-  const parsed = parseMapeoBody(req.body?.mapeo, campos);
+  const parsed = esOferta
+    ? parseMapeoBodyOferta(req.body?.mapeo, campos)
+    : parseMapeoBodyCatalogo(req.body?.mapeo, campos);
   if ("error" in parsed) {
     res.status(400).json({ error: parsed.error });
     return;
@@ -245,10 +269,9 @@ uploadsRouter.post("/:id/aprobar-mapeo", async (req, res) => {
   }
 
   try {
-    const publicados = await aprobarMapeoYPublicar(
-      id,
-      parsed.mapping as ColumnMapping | OfertaColumnMapping
-    );
+    const publicados = esOferta
+      ? await aprobarMapeoYPublicar(id, parsed.mapping as OfertaColumnMapping)
+      : await aprobarMapeoYPublicar(id, parsed.mapping as ColumnMapping);
     const cargaFinal = await prisma.carga.findUnique({ where: { id }, include: { proveedor: true } });
     res.json({ carga: cargaFinal, publicados });
   } catch (err) {
@@ -269,9 +292,12 @@ uploadsRouter.post("/:id/confirmar", async (req, res) => {
     res.status(404).json({ error: "Carga no encontrada." });
     return;
   }
-  const campos = carga.tipoDatos === "oferta" ? CANONICAL_FIELDS_OFERTAS : CANONICAL_FIELDS;
+  const esOferta = carga.tipoDatos === "oferta";
+  const campos = esOferta ? CANONICAL_FIELDS_OFERTAS : CANONICAL_FIELDS;
 
-  const parsed = parseMapeoBody(req.body?.mapeo ?? {}, campos);
+  const parsed = esOferta
+    ? parseMapeoBodyOferta(req.body?.mapeo ?? {}, campos)
+    : parseMapeoBodyCatalogo(req.body?.mapeo ?? {}, campos);
   if ("error" in parsed) {
     res.status(400).json({ error: parsed.error });
     return;
@@ -284,18 +310,13 @@ uploadsRouter.post("/:id/confirmar", async (req, res) => {
   }
 
   try {
-    const publicados =
-      carga.tipoDatos === "oferta"
-        ? await confirmarCargaYPublicarOferta(
-            id,
-            parsed.mapping as OfertaColumnMapping,
-            filas as Array<Partial<Record<OfertaField, unknown>> & { raw_data?: unknown }>
-          )
-        : await confirmarCargaYPublicar(
-            id,
-            parsed.mapping as ColumnMapping,
-            filas as Array<CanonicalRowUpload>
-          );
+    const publicados = esOferta
+      ? await confirmarCargaYPublicarOferta(
+          id,
+          parsed.mapping as OfertaColumnMapping,
+          filas as Array<Partial<Record<OfertaField, unknown>> & { raw_data?: unknown }>
+        )
+      : await confirmarCargaYPublicar(id, parsed.mapping as ColumnMapping, filas as Array<CanonicalRowUpload>);
     const cargaFinal = await prisma.carga.findUnique({ where: { id }, include: { proveedor: true } });
     res.json({ carga: cargaFinal, publicados });
   } catch (err) {
