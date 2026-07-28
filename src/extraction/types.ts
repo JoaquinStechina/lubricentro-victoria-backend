@@ -25,9 +25,13 @@ export type ExtractedTable = {
   rows: ExtractedRow[];
 };
 
-// columnaOrigen -> campoDestino. Las columnas no incluidas acá quedan en
-// raw_data.
-export type ColumnMapping = Record<string, CanonicalField>;
+// columnaOrigen -> lista de campoDestino. Antes era Record<string,
+// CanonicalField> (una columna, un solo destino) — pasa a array para poder
+// mapear una misma columna a más de un campo canónico a la vez (ej. una
+// columna "Precio" que alimenta precio_lista Y precio_neto). Un array de un
+// solo elemento es el caso de siempre, sin cambio de comportamiento. Las
+// columnas no incluidas acá quedan en raw_data.
+export type ColumnMapping = Record<string, CanonicalField[]>;
 
 export type CanonicalRow = {
   marca: string | null;
