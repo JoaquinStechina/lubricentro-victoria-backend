@@ -45,7 +45,12 @@ async function upsertMapeoColumnas(
   for (const [columnaOrigen, campoDestino] of Object.entries(mapping)) {
     await prisma.mapeoColumna.upsert({
       where: {
-        proveedorId_columnaOrigen_tipoDatos: { proveedorId, columnaOrigen, tipoDatos },
+        proveedorId_columnaOrigen_campoDestino_tipoDatos: {
+          proveedorId,
+          columnaOrigen,
+          campoDestino,
+          tipoDatos,
+        },
       },
       update: { campoDestino },
       create: { proveedorId, columnaOrigen, campoDestino, tipoDatos },

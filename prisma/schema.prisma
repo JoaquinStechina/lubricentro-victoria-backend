@@ -43,6 +43,20 @@ model Proveedor {
   cargas         Carga[]
   autoDescargas  AutoDescargaMarca[]
 
+  // "abc_portal" | "dropbox_directo" | null (null = sin auto-descarga
+  // configurada, proveedor solo de carga manual). Determina qué worker de
+  // automation/ procesa las filas de AutoDescargaMarca de este proveedor
+  // (ver docs/superpowers/specs/2026-07-28-borur-auto-descarga-design.md).
+  mecanismoAutoDescarga String?
+  // Solo aplica a mecanismoAutoDescarga = "dropbox_directo": el link
+  // compartido (uno solo, no por marca — todas las marcas de un proveedor
+  // "dropbox_directo" viven en el mismo archivo).
+  urlDescargaAutomatica String?
+  // Solo aplica cuando una fila no tiene columna de IVA mapeada: valor de
+  // alicuota_iva a usar como fallback (ver applyMapping en mapping.ts). null
+  // = no inventar nada, comportamiento de siempre.
+  alicuotaIvaDefault    Float?
+
   @@map("proveedores")
 }
 
@@ -170,7 +184,13 @@ model MapeoColumna {
   tipoDatos     String   @default("catalogo")
   createdAt     DateTime @default(now())
 
-  @@unique([proveedorId, columnaOrigen, tipoDatos])
+  // Antes era @@unique([proveedorId, columnaOrigen, tipoDatos]) — una sola
+  // columna origen solo podía tener un campo destino guardado. Se relaja
+  // para permitir mapeo uno-a-muchos (ej. una columna "Precio" que alimenta
+  // precio_lista Y precio_neto a la vez): ahora puede haber varias filas
+  // para la misma columnaOrigen, una por cada campoDestino asignado (ver
+  // upsertMapeoColumnas en processCarga.ts).
+  @@unique([proveedorId, columnaOrigen, campoDestino, tipoDatos])
   @@map("mapeos_columna")
 }
 
@@ -200,6 +220,13 @@ model Carga {
   // proveedores. ReviewTable.tsx lo usa para prellenar el % de ganancia en
   // vez de arrancar vacío (ver docs/superpowers/specs/2026-07-23-abc-auto-descarga-marcas-design.md).
   porcentajeGananciaDefault Float?
+  // "manual" | "auto_descarga" — discriminador explícito de origen, no se
+  // infiere de porcentajeGananciaDefault (puede ser null aunque la carga sí
+  // venga de auto-descarga, si la fila no tiene % configurado). Solo las
+  // cargas "auto_descarga" son candidatas a auto-publicación condicionada
+  // (ver backend/src/automation/autoPublicacion.ts). Default "manual" para
+  // no romper cargas existentes/subidas a mano.
+  origen         String    @default("manual")
   // pendiente | procesando | revision_pendiente | confirmacion_pendiente |
   // completado | error. revision_pendiente = mapeo sugerido por IA sin
   // aprobar (proveedor nuevo o headers distintos); confirmacion_pendiente =
