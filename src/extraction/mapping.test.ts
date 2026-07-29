@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyMapping, toNumberOrNull, aplicarAlicuotaIvaDefault } from "./mapping.js";
+import { applyMapping, toNumberOrNull, aplicarAlicuotaIvaDefault, calcularPrecioSugerido } from "./mapping.js";
 import type { ColumnMapping } from "./types.js";
 
 // Casos reales relevados en ofertas/ofertas baterías autos bosch.xls y en
@@ -167,4 +167,34 @@ test("aplicarAlicuotaIvaDefault: sin default (undefined/null), deja alicuota_iva
 test("aplicarAlicuotaIvaDefault: redondea el default a 2 decimales", () => {
   const row = { alicuota_iva: null };
   assert.deepEqual(aplicarAlicuotaIvaDefault(row, 21.005), { alicuota_iva: 21.01 });
+});
+
+// Caso real: cargas auto-publicadas (auto-descarga sin revisión humana)
+// quedaban con precio_sugerido siempre null porque nadie tipeaba el % de
+// ganancia en ReviewTable.tsx — aunque ese % ya estuviera configurado por
+// marca (Carga.porcentajeGananciaDefault, ver intentarAutoPublicar).
+test("calcularPrecioSugerido: completa precio_sugerido null a partir de precio_con_iva + %", () => {
+  const row = { precio_con_iva: 1000, precio_sugerido: null };
+  assert.deepEqual(calcularPrecioSugerido(row, 30), { precio_con_iva: 1000, precio_sugerido: 1300 });
+});
+
+test("calcularPrecioSugerido: no toca un precio_sugerido que ya tiene valor", () => {
+  const row = { precio_con_iva: 1000, precio_sugerido: 9999 };
+  assert.deepEqual(calcularPrecioSugerido(row, 30), { precio_con_iva: 1000, precio_sugerido: 9999 });
+});
+
+test("calcularPrecioSugerido: sin porcentajeGanancia (undefined/null), deja precio_sugerido en null", () => {
+  const row = { precio_con_iva: 1000, precio_sugerido: null };
+  assert.deepEqual(calcularPrecioSugerido(row), { precio_con_iva: 1000, precio_sugerido: null });
+  assert.deepEqual(calcularPrecioSugerido(row, null), { precio_con_iva: 1000, precio_sugerido: null });
+});
+
+test("calcularPrecioSugerido: sin precio_con_iva, deja precio_sugerido en null", () => {
+  const row = { precio_con_iva: null, precio_sugerido: null };
+  assert.deepEqual(calcularPrecioSugerido(row, 30), { precio_con_iva: null, precio_sugerido: null });
+});
+
+test("calcularPrecioSugerido: redondea a 2 decimales", () => {
+  const row = { precio_con_iva: 333.33, precio_sugerido: null };
+  assert.deepEqual(calcularPrecioSugerido(row, 17.5), { precio_con_iva: 333.33, precio_sugerido: 391.66 });
 });

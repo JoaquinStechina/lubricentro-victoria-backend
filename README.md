@@ -711,8 +711,27 @@ el camino más común — no pasa por `applyMapping`, así que sin este fallback
 explícito el default de IVA solo se hubiera aplicado en cargas
 auto-publicadas, nunca en las confirmadas a mano).
 
+**`precio_sugerido` en cargas auto-publicadas**: `precio_sugerido` nunca se
+mapea de una columna (no es un `CanonicalField`) — normalmente lo calcula
+`ReviewTable.tsx` del lado del cliente, a partir de `precio_con_iva` + un %
+de ganancia que tipea un humano al revisar. Como la auto-publicación no pasa
+por esa pantalla, esas filas quedaban siempre con `precio_sugerido: null`
+aunque el dato para calcularlo ya estuviera disponible: cada
+`AutoDescargaMarca` tiene su propio `porcentajeGanancia`, copiado a
+`Carga.porcentajeGananciaDefault` al crearla. `intentarAutoPublicar` ahora
+usa ese valor con `calcularPrecioSugerido` (`mapping.ts`, mismo criterio que
+`aplicarAlicuotaIvaDefault`: no inventa nada si falta el % o `precio_con_iva`,
+y no pisa un `precio_sugerido` que ya tenga valor). Nota:
+`precio_lista_con_iva` tiene el mismo origen (calculado en `ReviewTable.tsx`,
+nunca mapeado) y hoy sigue sin resolverse en el camino automático — se dejó
+fuera de este cambio porque nadie lo pidió todavía, ver "Pendiente".
+
 ## Pendiente
 
+- `precio_lista_con_iva` no se calcula en cargas auto-publicadas (ver
+  "Automatización") — mismo origen que `precio_sugerido` (calculado en
+  `ReviewTable.tsx`, nunca mapeado de una columna), pero no se le agregó el
+  mismo fallback porque no había un caso real que lo necesitara todavía.
 - Cola/worker en vez de procesar sincrónicamente en el request — para
   archivos grandes o con muchas páginas de PDF, `POST /:id/procesar` puede
   tardar 1-2 minutos con el usuario esperando.

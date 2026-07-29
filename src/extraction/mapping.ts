@@ -340,3 +340,24 @@ export function aplicarAlicuotaIvaDefault<T extends { alicuota_iva: number | nul
   }
   return row;
 }
+
+// precio_sugerido nunca se mapea de una columna (no es un CanonicalField):
+// normalmente lo calcula ReviewTable.tsx del lado del cliente, a partir de
+// precio_con_iva + el % de ganancia que tipea un humano al revisar la carga.
+// El único camino que no pasa por esa pantalla es la auto-publicación de
+// cargas de auto-descarga (ver intentarAutoPublicar en
+// automation/autoPublicacion.ts) — ese camino ya tiene el % configurado a
+// mano por marca (Carga.porcentajeGananciaDefault, copiado de
+// AutoDescargaMarca.porcentajeGanancia al crear la Carga), así que sin este
+// cálculo esas filas quedaban con precio_sugerido null aunque el dato para
+// calcularlo ya estuviera disponible. undefined/null = no inventar nada, ni
+// pisar un precio_sugerido que ya haya llegado con valor.
+export function calcularPrecioSugerido<
+  T extends { precio_con_iva: number | null; precio_sugerido: number | null },
+>(row: T, porcentajeGanancia?: number | null): T {
+  if (row.precio_sugerido === null && row.precio_con_iva != null && porcentajeGanancia != null) {
+    const precioSugerido = row.precio_con_iva + (row.precio_con_iva * porcentajeGanancia) / 100;
+    return { ...row, precio_sugerido: roundTo2(precioSugerido) };
+  }
+  return row;
+}

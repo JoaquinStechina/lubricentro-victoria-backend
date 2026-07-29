@@ -9,7 +9,7 @@
 import { prisma } from "../db.js";
 import { detectarAdvertencias } from "../extraction/advertencias.js";
 import { confirmarCargaYPublicar } from "../extraction/processCarga.js";
-import { applyMapping } from "../extraction/mapping.js";
+import { applyMapping, calcularPrecioSugerido } from "../extraction/mapping.js";
 import type { ColumnMapping, ExtractedRow } from "../extraction/types.js";
 import { debePublicarAutomaticamente, filasSonPublicables } from "./autoPublicacionHelpers.js";
 
@@ -36,7 +36,9 @@ export async function intentarAutoPublicar(cargaId: number): Promise<boolean> {
   if (!debePublicarAutomaticamente(carga.estado, advertencias.length)) return false;
 
   const proveedor = await prisma.proveedor.findUniqueOrThrow({ where: { id: carga.proveedorId } });
-  const canonicalRows = applyMapping(headers, rows, mapping, proveedor.alicuotaIvaDefault);
+  const canonicalRows = applyMapping(headers, rows, mapping, proveedor.alicuotaIvaDefault).map((row) =>
+    calcularPrecioSugerido(row, carga.porcentajeGananciaDefault)
+  );
   // Chequeo de sanidad además de "sin advertencias" — ver el comentario de
   // filasSonPublicables para el caso real que lo motivó (mapeo parcial
   // reusado por casualidad entre marcas de un mismo proveedor).
