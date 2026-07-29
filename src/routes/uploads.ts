@@ -127,9 +127,25 @@ uploadsRouter.post("/", upload.single("file"), async (req, res) => {
   res.status(201).json(carga);
 });
 
+// La lista de /cargas solo muestra archivo/proveedor/formato/tipo/estado/
+// fecha (ver lubricentro-victoria-front/app/cargas/page.tsx) — nunca
+// filasExtraidas, que puede pesar varios cientos de KB por carga (el
+// contenido completo del archivo parseado). Traerlo igual para ordenar por
+// createdAt en una tabla con archivos grandes puede superar el
+// sort_buffer_size de MySQL ("Out of sort memory"). El detalle completo
+// (incluido filasExtraidas) se sigue sirviendo aparte en GET /:id, que es
+// lo único que la pantalla de revisión necesita.
 uploadsRouter.get("/", async (_req, res) => {
   const cargas = await prisma.carga.findMany({
-    include: { proveedor: true },
+    select: {
+      id: true,
+      nombreArchivo: true,
+      tipoArchivo: true,
+      tipoDatos: true,
+      estado: true,
+      createdAt: true,
+      proveedor: { select: { id: true, nombre: true } },
+    },
     orderBy: { createdAt: "desc" },
   });
   res.json(cargas);
