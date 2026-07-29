@@ -17,6 +17,16 @@ import type { ExtractedRow } from "./types.js";
 
 const MAPPING_MODEL = process.env.OPENROUTER_MAPPING_MODEL || "anthropic/claude-sonnet-5";
 
+// Paralelo a CAMPOS_NUMERICOS (mapping.ts): campos que nunca deben
+// combinarse concatenando texto si dos columnas de origen mapean al mismo
+// destino.
+const CAMPOS_NUMERICOS_OFERTA: ReadonlySet<OfertaField> = new Set([
+  "desde_cantidad",
+  "descuento_pct",
+  "precio_unitario",
+  "cantidad_disponible",
+]);
+
 // Igual que getExistingMapping (mapping.ts) pero filtrando por
 // tipoDatos: "oferta" — un proveedor puede tener una columna "SKU" mapeada
 // distinto en su catálogo y en sus ofertas.
@@ -176,16 +186,23 @@ export function applyMappingOfertas(
     }
 
     // Si dos o más columnas mapean al mismo campo, se concatenan en orden
-    // separadas por espacio (ver combinarValores en mapping.ts).
+    // separadas por espacio (ver combinarValores en mapping.ts) — salvo un
+    // campo numérico (ver CAMPOS_NUMERICOS_OFERTA), que nunca se concatena:
+    // toNumberOrNull limpia el espacio antes de parsear, así que dos números
+    // con decimales terminan mezclados en un entero gigante (ver el caso
+    // real de precio_con_iva en mapping.ts/CAMPOS_NUMERICOS).
     const canonical: Partial<Record<OfertaField, unknown>> = {};
     for (const [destino, valores] of valoresPorDestino) {
-      canonical[destino] =
-        valores.length === 1
-          ? valores[0]
-          : valores
-              .map((v) => (v === null || v === undefined ? "" : String(v).trim()))
-              .filter((v) => v !== "")
-              .join(" ");
+      if (valores.length === 1) {
+        canonical[destino] = valores[0];
+      } else if (CAMPOS_NUMERICOS_OFERTA.has(destino)) {
+        canonical[destino] = valores.find((v) => v !== null && v !== undefined && v !== "") ?? valores[0];
+      } else {
+        canonical[destino] = valores
+          .map((v) => (v === null || v === undefined ? "" : String(v).trim()))
+          .filter((v) => v !== "")
+          .join(" ");
+      }
     }
 
     if (canonical.marca === undefined || canonical.marca === null || canonical.marca === "") {

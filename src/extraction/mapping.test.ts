@@ -60,6 +60,37 @@ test("applyMapping: columnas vacías no dejan espacios sobrantes al concatenar",
   assert.equal(row.descripcion, "Filtro de aceite");
 });
 
+// Caso real de producción: ABC tuvo "PRECIO LISTA C/IVA" y "PRECIO NETO CON
+// IVA" mapeadas juntas a precio_con_iva. Antes de este fix, combinarValores
+// las unía con un espacio y toNumberOrNull limpiaba el espacio antes de
+// parsear — con las dos columnas trayendo decimales, el string combinado
+// quedaba con 2+ puntos y la heurística de "son separadores de miles"
+// mezclaba ambos precios en un entero gigante (se vieron precios de miles de
+// millones de pesos publicados). Un campo numérico con dos columnas mapeadas
+// nunca debe concatenarse — se queda con la primera no vacía.
+test("applyMapping: dos columnas al mismo destino numérico NO se concatenan (se queda con la primera)", () => {
+  const headers = ["PRECIO LISTA C/IVA", "PRECIO NETO CON IVA"];
+  const rows = [{ "PRECIO LISTA C/IVA": "6837.16", "PRECIO NETO CON IVA": "617054.00" }];
+  const mapping: ColumnMapping = {
+    "PRECIO LISTA C/IVA": ["precio_con_iva"],
+    "PRECIO NETO CON IVA": ["precio_con_iva"],
+  };
+  const [row] = applyMapping(headers, rows, mapping);
+  assert.equal(row.precio_con_iva, 6837.16);
+  assert.notEqual(row.precio_con_iva, 68371661705400);
+});
+
+test("applyMapping: campo numérico con dos columnas, la primera vacía, usa la segunda", () => {
+  const headers = ["PRECIO LISTA C/IVA", "PRECIO NETO CON IVA"];
+  const rows = [{ "PRECIO LISTA C/IVA": "", "PRECIO NETO CON IVA": "617054.00" }];
+  const mapping: ColumnMapping = {
+    "PRECIO LISTA C/IVA": ["precio_con_iva"],
+    "PRECIO NETO CON IVA": ["precio_con_iva"],
+  };
+  const [row] = applyMapping(headers, rows, mapping);
+  assert.equal(row.precio_con_iva, 617054);
+});
+
 test("applyMapping: una sola columna mapeada no cambia de comportamiento", () => {
   const headers = ["Precio"];
   const rows = [{ Precio: 1985.78 }];

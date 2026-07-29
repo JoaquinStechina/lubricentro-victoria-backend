@@ -232,6 +232,22 @@ export function normalizeCanonicalRow(input: CanonicalRowUpload): CanonicalRow {
 // (descripción, etc.) sigue uniéndose con espacio.
 const CAMPOS_CODIGO: ReadonlySet<CanonicalField> = new Set(["sku_interno", "sku_proveedor"]);
 
+// Campos numéricos: nunca tiene sentido "combinarlos" concatenando texto (a
+// diferencia de descripción, no hay una noción razonable de "unir" dos
+// precios). Mapear el mismo campo de precio a dos columnas de origen casi
+// siempre es un error de configuración del mapeo, no una combinación
+// intencional — y concatenarlos es particularmente peligroso acá: toNumberOrNull
+// limpia espacios antes de parsear, así que dos precios con decimales
+// terminan mezclados en un solo entero gigante (ver mapping.test.ts, caso
+// real: ABC tuvo "PRECIO LISTA C/IVA" + "PRECIO NETO CON IVA" mapeadas juntas
+// a precio_con_iva y publicó precios de miles de millones de pesos).
+export const CAMPOS_NUMERICOS: ReadonlySet<CanonicalField> = new Set([
+  "precio_neto",
+  "precio_con_iva",
+  "precio_lista",
+  "alicuota_iva",
+]);
+
 // Si dos o más columnas de origen apuntan al mismo campo destino (ej.
 // "Producto" y "Envase" -> descripcion), se concatenan en el orden en que
 // aparecen en `headers`, salteando valores vacíos.
@@ -240,6 +256,16 @@ function combinarValores(destino: CanonicalField, valores: unknown[]): string {
     .map((v) => (v === null || v === undefined ? "" : String(v).trim()))
     .filter((v) => v !== "");
   return limpios.join(CAMPOS_CODIGO.has(destino) ? "" : " ");
+}
+
+// Para un campo numérico con más de una columna mapeada: nos quedamos con el
+// primer valor no vacío en vez de concatenar (ver CAMPOS_NUMERICOS). No hay
+// forma de saber cuál de las columnas es "la correcta" en este punto — eso
+// se le avisa al humano como advertencia (ver detectarMapeoConflictivo en
+// advertencias.ts), esto es solo la red de seguridad para no corromper el
+// número mientras tanto.
+function primerValorNoVacio(valores: unknown[]): unknown {
+  return valores.find((v) => v !== null && v !== undefined && v !== "") ?? valores[0];
 }
 
 export function applyMapping(
@@ -273,8 +299,15 @@ export function applyMapping(
     for (const [destino, valores] of valoresPorDestino) {
       // Una sola columna mapeada: se deja el valor crudo tal cual (puede ser
       // number) para no cambiar el comportamiento existente. Dos o más: se
-      // combinan como texto.
-      canonical[destino] = valores.length === 1 ? valores[0] : combinarValores(destino, valores);
+      // combinan como texto, salvo un campo numérico (ver CAMPOS_NUMERICOS),
+      // que nunca se concatena.
+      if (valores.length === 1) {
+        canonical[destino] = valores[0];
+      } else if (CAMPOS_NUMERICOS.has(destino)) {
+        canonical[destino] = primerValorNoVacio(valores);
+      } else {
+        canonical[destino] = combinarValores(destino, valores);
+      }
     }
 
     // seccion/marca pueden venir de una columna mapeada explícitamente, o

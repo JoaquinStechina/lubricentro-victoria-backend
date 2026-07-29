@@ -1,6 +1,6 @@
 import { prisma } from "../db.js";
-import { applyMapping } from "./mapping.js";
-import type { ColumnMapping, ExtractedRow } from "./types.js";
+import { applyMapping, CAMPOS_NUMERICOS } from "./mapping.js";
+import type { CanonicalField, ColumnMapping, ExtractedRow } from "./types.js";
 
 // Etapa 5 del plan original (contexto.md) — nunca se construyó como paso
 // separado; hoy la pantalla de revisión humana era la única validación.
@@ -28,6 +28,36 @@ export async function detectarAdvertencias(
 ): Promise<Advertencia[]> {
   const canonicalRows = applyMapping(headers, rows, mapping);
   const advertencias: Advertencia[] = [];
+
+  // Mapeo conflictivo: dos o más columnas de origen apuntando al mismo
+  // campo numérico (ej. "PRECIO LISTA C/IVA" y "PRECIO NETO CON IVA" ambas a
+  // precio_con_iva). applyMapping ya no corrompe el número en ese caso (se
+  // queda con la primera columna no vacía en el orden de `headers`, ver
+  // CAMPOS_NUMERICOS en mapping.ts), pero "la primera" es una decisión
+  // arbitraria — el humano tiene que ver esto y corregir el mapeo, no confiar
+  // en que el sistema adivinó cuál de las dos es la correcta. Se muestra en
+  // la fila 0 (no es un problema de una fila puntual, es del mapeo entero)
+  // porque Advertencia está pensada por fila y la pantalla de revisión no
+  // tiene hoy un lugar para advertencias "de toda la carga".
+  const columnasPorDestinoNumerico = new Map<CanonicalField, string[]>();
+  for (const [columna, destinos] of Object.entries(mapping)) {
+    for (const destino of destinos) {
+      if (!CAMPOS_NUMERICOS.has(destino)) continue;
+      const lista = columnasPorDestinoNumerico.get(destino) ?? [];
+      lista.push(columna);
+      columnasPorDestinoNumerico.set(destino, lista);
+    }
+  }
+  for (const [destino, columnas] of columnasPorDestinoNumerico) {
+    if (columnas.length <= 1) continue;
+    advertencias.push({
+      fila: 0,
+      campo: destino,
+      mensaje:
+        `Mapeo conflictivo: ${columnas.map((c) => `"${c}"`).join(" y ")} mapean al mismo campo ` +
+        `"${destino}" — revisar cuál es la correcta y sacar la otra del mapeo.`,
+    });
+  }
 
   canonicalRows.forEach((row, fila) => {
     const precio = row.precio_neto ?? row.precio_con_iva;
