@@ -11,7 +11,7 @@ import { detectarAdvertencias } from "../extraction/advertencias.js";
 import { confirmarCargaYPublicar } from "../extraction/processCarga.js";
 import { applyMapping } from "../extraction/mapping.js";
 import type { ColumnMapping, ExtractedRow } from "../extraction/types.js";
-import { debePublicarAutomaticamente } from "./autoPublicacionHelpers.js";
+import { debePublicarAutomaticamente, filasSonPublicables } from "./autoPublicacionHelpers.js";
 
 // Devuelve true si la carga se publicó sola.
 export async function intentarAutoPublicar(cargaId: number): Promise<boolean> {
@@ -37,6 +37,10 @@ export async function intentarAutoPublicar(cargaId: number): Promise<boolean> {
 
   const proveedor = await prisma.proveedor.findUniqueOrThrow({ where: { id: carga.proveedorId } });
   const canonicalRows = applyMapping(headers, rows, mapping, proveedor.alicuotaIvaDefault);
+  // Chequeo de sanidad además de "sin advertencias" — ver el comentario de
+  // filasSonPublicables para el caso real que lo motivó (mapeo parcial
+  // reusado por casualidad entre marcas de un mismo proveedor).
+  if (!filasSonPublicables(canonicalRows)) return false;
   await confirmarCargaYPublicar(cargaId, mapping, canonicalRows);
   return true;
 }
