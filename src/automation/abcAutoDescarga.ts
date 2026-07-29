@@ -1,6 +1,6 @@
 // Worker de auto-descarga de listas de precios de ABC por marca. Dos
 // disparadores lo llaman (ver docs/superpowers/specs/2026-07-23-abc-auto-descarga-marcas-design.md):
-// - backend/scripts/run-auto-descargas-abc.ts (cron diario, todas las
+// - backend/scripts/run-auto-descargas.ts (cron diario, todas las
 //   marcas activas).
 // - POST /api/auto-descargas/:id/probar (una sola marca, al toque).
 //
