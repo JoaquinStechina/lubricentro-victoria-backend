@@ -51,7 +51,12 @@ model Proveedor {
   // Solo aplica a mecanismoAutoDescarga = "dropbox_directo": el link
   // compartido (uno solo, no por marca — todas las marcas de un proveedor
   // "dropbox_directo" viven en el mismo archivo).
-  urlDescargaAutomatica String?
+  // @db.Text: un link de Dropbox real (scl/fo con rlkey + nombre de archivo
+  // URL-encodeado) puede superar los 191 caracteres del VARCHAR default —
+  // confirmado con el link real de BORUR (195 caracteres). Este campo nunca
+  // se busca por igualdad ni se indexa, así que no hay costo real en no
+  // acotarlo.
+  urlDescargaAutomatica String? @db.Text
   // Solo aplica cuando una fila no tiene columna de IVA mapeada: valor de
   // alicuota_iva a usar como fallback (ver applyMapping en mapping.ts). null
   // = no inventar nada, comportamiento de siempre.
