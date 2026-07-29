@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { requireRole } from "../middleware/auth.js";
 import { correrAutoDescargasAbc } from "../automation/abcAutoDescarga.js";
+import { correrAutoDescargasDirectas } from "../automation/dropboxAutoDescarga.js";
 
 export const autoDescargasRouter = Router();
 
@@ -99,12 +100,19 @@ autoDescargasRouter.delete("/:id", async (req, res) => {
 // diario). Tarda ~10-20s: abre navegador, loguea, descarga una marca.
 autoDescargasRouter.post("/:id/probar", async (req, res) => {
   const id = Number(req.params.id);
-  const existente = await prisma.autoDescargaMarca.findUnique({ where: { id } });
+  const existente = await prisma.autoDescargaMarca.findUnique({
+    where: { id },
+    include: { proveedor: true },
+  });
   if (!existente) {
     res.status(404).json({ error: "Fila no encontrada." });
     return;
   }
-  await correrAutoDescargasAbc([id]);
+  if (existente.proveedor.mecanismoAutoDescarga === "dropbox_directo") {
+    await correrAutoDescargasDirectas([id]);
+  } else {
+    await correrAutoDescargasAbc([id]);
+  }
   const fila = await prisma.autoDescargaMarca.findUnique({
     where: { id },
     include: { proveedor: true },

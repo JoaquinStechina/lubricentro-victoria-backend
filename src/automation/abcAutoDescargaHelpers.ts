@@ -64,6 +64,7 @@ export function datosNuevaCarga(fila: FilaParaCarga, nombreArchivo: string, ruta
     tipoArchivo: "xlsx",
     tipoDatos: "catalogo",
     estado: "pendiente",
+    origen: "auto_descarga",
     porcentajeGananciaDefault: fila.porcentajeGanancia,
   };
 }

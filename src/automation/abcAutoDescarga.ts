@@ -1,6 +1,6 @@
 // Worker de auto-descarga de listas de precios de ABC por marca. Dos
 // disparadores lo llaman (ver docs/superpowers/specs/2026-07-23-abc-auto-descarga-marcas-design.md):
-// - backend/scripts/run-auto-descargas-abc.ts (cron diario, todas las
+// - backend/scripts/run-auto-descargas.ts (cron diario, todas las
 //   marcas activas).
 // - POST /api/auto-descargas/:id/probar (una sola marca, al toque).
 //
@@ -24,6 +24,7 @@ import {
   truncarMensaje,
   hashContenidoExtraido,
 } from "./abcAutoDescargaHelpers.js";
+import { intentarAutoPublicar } from "./autoPublicacion.js";
 
 const PORTAL_URL = "https://www.abc-sa.com.ar/prices-lists-dashboard";
 const LOGIN_URL = "https://www.abc-sa.com.ar/account/login";
@@ -201,13 +202,14 @@ async function descargarYProcesarMarca(page: Page, fila: FilaConProveedor): Prom
   });
 
   await procesarCarga(carga.id);
+  const publicada = await intentarAutoPublicar(carga.id);
 
   await prisma.autoDescargaMarca.update({
     where: { id: fila.id },
     data: {
       ultimoHashArchivo: hash,
       ultimaCorridaEn: new Date(),
-      ultimoResultado: "carga_creada",
+      ultimoResultado: publicada ? "publicado_automaticamente" : "carga_creada",
       ultimaCargaId: carga.id,
     },
   });

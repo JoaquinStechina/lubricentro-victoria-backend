@@ -3,7 +3,13 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { extractExcelWithFallback, combineTables, extractBannerLines } from "./excel.js";
 import { extractWithVision, extractOfertaWithVision } from "./vision.js";
-import { getExistingMapping, suggestMapping, applyMapping, normalizeCanonicalRow } from "./mapping.js";
+import {
+  getExistingMapping,
+  suggestMapping,
+  applyMapping,
+  normalizeCanonicalRow,
+  aplicarAlicuotaIvaDefault,
+} from "./mapping.js";
 import {
   getExistingMappingOferta,
   suggestMappingOfertas,
@@ -32,24 +38,36 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
-// Guarda el mapeo aprobado (o corregido a mano) para reusarlo en próximas
-// cargas del mismo proveedor sin volver a pedir revisión de columnas.
-// tipoDatos separa el mapeo de catálogo del de ofertas (ver
-// docs/plan-ofertas.md): un proveedor puede tener una columna "SKU" mapeada
-// distinto en cada uno.
+// mapping puede traer un solo destino por columna (ofertas, siempre) o
+// varios (catálogo, desde que el mapeo admite uno-a-muchos — ver mapping.ts
+// y el schema de MapeoColumna). Por cada columna, borra los destinos
+// guardados que ya no están en la lista nueva (si un humano saca un destino
+// que antes tenía) y crea/mantiene los que sí — así una edición posterior
+// nunca deja un destino viejo huérfano en MapeoColumna.
 async function upsertMapeoColumnas(
   proveedorId: number,
-  mapping: Record<string, string>,
+  mapping: Record<string, string | string[]>,
   tipoDatos: "catalogo" | "oferta" = "catalogo"
 ): Promise<void> {
-  for (const [columnaOrigen, campoDestino] of Object.entries(mapping)) {
-    await prisma.mapeoColumna.upsert({
-      where: {
-        proveedorId_columnaOrigen_tipoDatos: { proveedorId, columnaOrigen, tipoDatos },
-      },
-      update: { campoDestino },
-      create: { proveedorId, columnaOrigen, campoDestino, tipoDatos },
+  for (const [columnaOrigen, destino] of Object.entries(mapping)) {
+    const destinos = Array.isArray(destino) ? destino : [destino];
+    await prisma.mapeoColumna.deleteMany({
+      where: { proveedorId, columnaOrigen, tipoDatos, campoDestino: { notIn: destinos } },
     });
+    for (const campoDestino of destinos) {
+      await prisma.mapeoColumna.upsert({
+        where: {
+          proveedorId_columnaOrigen_campoDestino_tipoDatos: {
+            proveedorId,
+            columnaOrigen,
+            campoDestino,
+            tipoDatos,
+          },
+        },
+        update: {},
+        create: { proveedorId, columnaOrigen, campoDestino, tipoDatos },
+      });
+    }
   }
 }
 
@@ -360,7 +378,13 @@ export async function aprobarMapeoYPublicar(
   }
 
   await upsertMapeoColumnas(carga.proveedorId, mapping, "catalogo");
-  const canonicalRows = applyMapping(headers, rows, mapping as ColumnMapping);
+  const proveedorCatalogo = await prisma.proveedor.findUniqueOrThrow({ where: { id: carga.proveedorId } });
+  const canonicalRows = applyMapping(
+    headers,
+    rows,
+    mapping as ColumnMapping,
+    proveedorCatalogo.alicuotaIvaDefault
+  );
   return publicarCanonicalRows(cargaId, carga.proveedorId, canonicalRows);
 }
 
@@ -379,7 +403,14 @@ export async function confirmarCargaYPublicar(
   if (filasFinales.length === 0) throw new Error("No hay filas para publicar.");
 
   await upsertMapeoColumnas(carga.proveedorId, mapping, "catalogo");
-  const canonicalRows = filasFinales.map(normalizeCanonicalRow);
+  // La confirmación manual no pasa por applyMapping (recibe las filas ya
+  // armadas por ReviewTable.tsx, que no conoce el default de IVA del
+  // proveedor) — sin esto, Proveedor.alicuotaIvaDefault solo se aplicaría en
+  // el camino de auto-publicación, nunca cuando un humano confirma a mano.
+  const proveedor = await prisma.proveedor.findUniqueOrThrow({ where: { id: carga.proveedorId } });
+  const canonicalRows = filasFinales.map((fila) =>
+    aplicarAlicuotaIvaDefault(normalizeCanonicalRow(fila), proveedor.alicuotaIvaDefault)
+  );
   return publicarCanonicalRows(cargaId, carga.proveedorId, canonicalRows);
 }
 

@@ -56,15 +56,22 @@ export async function getExistingMapping(
   proveedorId: number,
   headers: string[]
 ): Promise<ColumnMapping | null> {
-  const guardados = await prisma.mapeoColumna.findMany({ where: { proveedorId } });
+  // tipoDatos: "catalogo" explícito — antes esta query traía también los
+  // mapeos de "oferta" del mismo proveedor (bug preexistente: si una columna
+  // se llamaba igual en catálogo y en ofertas con destino distinto, podía
+  // devolver el que no correspondía). getExistingMappingOferta ya filtraba
+  // bien (ver mappingOfertas.ts); esto lo alinea.
+  const guardados = await prisma.mapeoColumna.findMany({
+    where: { proveedorId, tipoDatos: "catalogo" },
+  });
   if (guardados.length === 0) return null;
 
   const mapping: ColumnMapping = {};
   let coincidencias = 0;
   for (const h of headers) {
-    const encontrado = guardados.find((g) => g.columnaOrigen === h);
-    if (encontrado) {
-      mapping[h] = encontrado.campoDestino as CanonicalField;
+    const encontrados = guardados.filter((g) => g.columnaOrigen === h);
+    if (encontrados.length > 0) {
+      mapping[h] = encontrados.map((g) => g.campoDestino as CanonicalField);
       coincidencias++;
     }
   }
@@ -133,7 +140,10 @@ con una entrada por cada columna de la lista de arriba.`;
   const parsed = JSON.parse(extractJsonObject(text)) as Record<string, unknown>;
   const mapping: ColumnMapping = {};
   for (const [columna, destino] of Object.entries(parsed)) {
-    if (isCanonicalField(destino)) mapping[columna] = destino;
+    // El LLM solo sugiere un destino por columna (ver prompt arriba) — se
+    // envuelve en un array de un elemento para calzar con ColumnMapping. Un
+    // segundo destino, si hace falta, lo agrega un humano en la revisión.
+    if (isCanonicalField(destino)) mapping[columna] = [destino];
   }
   return mapping;
 }
@@ -216,32 +226,44 @@ export function normalizeCanonicalRow(input: CanonicalRowUpload): CanonicalRow {
   };
 }
 
+// Columnas que representan un código: al combinar varias columnas de origen
+// en este destino, se unen sin separador (reconstruye un código partido en
+// dos columnas, ej. "AB" + "1234" -> "AB1234"). El resto de los campos
+// (descripción, etc.) sigue uniéndose con espacio.
+const CAMPOS_CODIGO: ReadonlySet<CanonicalField> = new Set(["sku_interno", "sku_proveedor"]);
+
 // Si dos o más columnas de origen apuntan al mismo campo destino (ej.
 // "Producto" y "Envase" -> descripcion), se concatenan en el orden en que
-// aparecen en `headers`, separadas por espacio, salteando valores vacíos.
-function combinarValores(valores: unknown[]): string {
-  return valores
+// aparecen en `headers`, salteando valores vacíos.
+function combinarValores(destino: CanonicalField, valores: unknown[]): string {
+  const limpios = valores
     .map((v) => (v === null || v === undefined ? "" : String(v).trim()))
-    .filter((v) => v !== "")
-    .join(" ");
+    .filter((v) => v !== "");
+  return limpios.join(CAMPOS_CODIGO.has(destino) ? "" : " ");
 }
 
 export function applyMapping(
   headers: string[],
   rows: ExtractedRow[],
-  mapping: ColumnMapping
+  mapping: ColumnMapping,
+  // Fallback cuando la fila no tiene columna de IVA mapeada (ver
+  // Proveedor.alicuotaIvaDefault en schema.prisma). undefined/null = no
+  // inventar nada, comportamiento de siempre.
+  alicuotaIvaDefault?: number | null
 ): CanonicalRow[] {
   return rows.map((row) => {
     const valoresPorDestino = new Map<CanonicalField, unknown[]>();
     const rawData: Record<string, unknown> = {};
 
     for (const h of headers) {
-      const destino = mapping[h];
+      const destinos = mapping[h];
       const valor = row[h];
-      if (destino) {
-        const lista = valoresPorDestino.get(destino) ?? [];
-        lista.push(valor);
-        valoresPorDestino.set(destino, lista);
+      if (destinos && destinos.length > 0) {
+        for (const destino of destinos) {
+          const lista = valoresPorDestino.get(destino) ?? [];
+          lista.push(valor);
+          valoresPorDestino.set(destino, lista);
+        }
       } else if (valor !== null && valor !== undefined && valor !== "") {
         rawData[h] = valor;
       }
@@ -252,7 +274,7 @@ export function applyMapping(
       // Una sola columna mapeada: se deja el valor crudo tal cual (puede ser
       // number) para no cambiar el comportamiento existente. Dos o más: se
       // combinan como texto.
-      canonical[destino] = valores.length === 1 ? valores[0] : combinarValores(valores);
+      canonical[destino] = valores.length === 1 ? valores[0] : combinarValores(destino, valores);
     }
 
     // seccion/marca pueden venir de una columna mapeada explícitamente, o
@@ -265,6 +287,23 @@ export function applyMapping(
       canonical.marca = row.__hoja;
     }
 
-    return normalizeCanonicalRow({ ...canonical, raw_data: rawData });
+    const normalizado = normalizeCanonicalRow({ ...canonical, raw_data: rawData });
+    return aplicarAlicuotaIvaDefault(normalizado, alicuotaIvaDefault);
   });
+}
+
+// Extraído para reusar el mismo fallback en confirmarCargaYPublicar
+// (processCarga.ts) — la confirmación manual desde ReviewTable.tsx no pasa
+// por applyMapping (recibe las filas ya armadas por el frontend), así que
+// sin esto el default de IVA por proveedor solo se aplicaría en el camino
+// de auto-publicación, nunca cuando un humano confirma a mano (el camino
+// más común). undefined/null = no inventar nada, comportamiento de siempre.
+export function aplicarAlicuotaIvaDefault<T extends { alicuota_iva: number | null }>(
+  row: T,
+  alicuotaIvaDefault?: number | null
+): T {
+  if (row.alicuota_iva === null && alicuotaIvaDefault != null) {
+    return { ...row, alicuota_iva: roundTo2(alicuotaIvaDefault) };
+  }
+  return row;
 }
