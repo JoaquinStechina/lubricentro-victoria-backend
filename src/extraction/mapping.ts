@@ -288,9 +288,22 @@ export function applyMapping(
     }
 
     const normalizado = normalizeCanonicalRow({ ...canonical, raw_data: rawData });
-    if (normalizado.alicuota_iva === null && alicuotaIvaDefault != null) {
-      normalizado.alicuota_iva = roundTo2(alicuotaIvaDefault);
-    }
-    return normalizado;
+    return aplicarAlicuotaIvaDefault(normalizado, alicuotaIvaDefault);
   });
+}
+
+// Extraído para reusar el mismo fallback en confirmarCargaYPublicar
+// (processCarga.ts) — la confirmación manual desde ReviewTable.tsx no pasa
+// por applyMapping (recibe las filas ya armadas por el frontend), así que
+// sin esto el default de IVA por proveedor solo se aplicaría en el camino
+// de auto-publicación, nunca cuando un humano confirma a mano (el camino
+// más común). undefined/null = no inventar nada, comportamiento de siempre.
+export function aplicarAlicuotaIvaDefault<T extends { alicuota_iva: number | null }>(
+  row: T,
+  alicuotaIvaDefault?: number | null
+): T {
+  if (row.alicuota_iva === null && alicuotaIvaDefault != null) {
+    return { ...row, alicuota_iva: roundTo2(alicuotaIvaDefault) };
+  }
+  return row;
 }

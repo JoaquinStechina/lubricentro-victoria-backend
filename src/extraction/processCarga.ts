@@ -3,7 +3,13 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { extractExcelWithFallback, combineTables, extractBannerLines } from "./excel.js";
 import { extractWithVision, extractOfertaWithVision } from "./vision.js";
-import { getExistingMapping, suggestMapping, applyMapping, normalizeCanonicalRow } from "./mapping.js";
+import {
+  getExistingMapping,
+  suggestMapping,
+  applyMapping,
+  normalizeCanonicalRow,
+  aplicarAlicuotaIvaDefault,
+} from "./mapping.js";
 import {
   getExistingMappingOferta,
   suggestMappingOfertas,
@@ -391,7 +397,14 @@ export async function confirmarCargaYPublicar(
   if (filasFinales.length === 0) throw new Error("No hay filas para publicar.");
 
   await upsertMapeoColumnas(carga.proveedorId, mapping, "catalogo");
-  const canonicalRows = filasFinales.map(normalizeCanonicalRow);
+  // La confirmación manual no pasa por applyMapping (recibe las filas ya
+  // armadas por ReviewTable.tsx, que no conoce el default de IVA del
+  // proveedor) — sin esto, Proveedor.alicuotaIvaDefault solo se aplicaría en
+  // el camino de auto-publicación, nunca cuando un humano confirma a mano.
+  const proveedor = await prisma.proveedor.findUniqueOrThrow({ where: { id: carga.proveedorId } });
+  const canonicalRows = filasFinales.map((fila) =>
+    aplicarAlicuotaIvaDefault(normalizeCanonicalRow(fila), proveedor.alicuotaIvaDefault)
+  );
   return publicarCanonicalRows(cargaId, carga.proveedorId, canonicalRows);
 }
 

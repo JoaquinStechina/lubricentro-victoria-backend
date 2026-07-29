@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyMapping, toNumberOrNull } from "./mapping.js";
+import { applyMapping, toNumberOrNull, aplicarAlicuotaIvaDefault } from "./mapping.js";
 import type { ColumnMapping } from "./types.js";
 
 // Casos reales relevados en ofertas/ofertas baterías autos bosch.xls y en
@@ -115,4 +115,25 @@ test("applyMapping: sin alicuotaIvaDefault, IVA sin mapear queda null (comportam
   const mapping: ColumnMapping = { Precio: ["precio_neto"] };
   const [row] = applyMapping(headers, rows, mapping);
   assert.equal(row.alicuota_iva, null);
+});
+
+test("aplicarAlicuotaIvaDefault: completa alicuota_iva null con el default", () => {
+  const row = { alicuota_iva: null, otroCampo: "x" };
+  assert.deepEqual(aplicarAlicuotaIvaDefault(row, 21), { alicuota_iva: 21, otroCampo: "x" });
+});
+
+test("aplicarAlicuotaIvaDefault: no toca un alicuota_iva ya presente", () => {
+  const row = { alicuota_iva: 10.5 };
+  assert.deepEqual(aplicarAlicuotaIvaDefault(row, 21), { alicuota_iva: 10.5 });
+});
+
+test("aplicarAlicuotaIvaDefault: sin default (undefined/null), deja alicuota_iva en null", () => {
+  const row = { alicuota_iva: null };
+  assert.deepEqual(aplicarAlicuotaIvaDefault(row, undefined), { alicuota_iva: null });
+  assert.deepEqual(aplicarAlicuotaIvaDefault(row, null), { alicuota_iva: null });
+});
+
+test("aplicarAlicuotaIvaDefault: redondea el default a 2 decimales", () => {
+  const row = { alicuota_iva: null };
+  assert.deepEqual(aplicarAlicuotaIvaDefault(row, 21.005), { alicuota_iva: 21.01 });
 });
