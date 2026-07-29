@@ -65,10 +65,27 @@ test("filasSonPublicables: una fila sin ningun precio -> false", () => {
   );
 });
 
-test("filasSonPublicables: alcanza con un solo campo de precio no nulo", () => {
+test("filasSonPublicables: alcanza con un solo campo de precio positivo", () => {
   assert.equal(
     filasSonPublicables([filaBase({ precio_neto: null, precio_con_iva: null, precio_lista: 500 })]),
     true
+  );
+});
+
+test("filasSonPublicables: precio en cero en todos los campos de precio -> false (no alcanza con 'no nulo')", () => {
+  // detectarAdvertencias nunca mira precio_lista, así que un mapeo que solo
+  // llena ese campo (en cero) no dispara ninguna advertencia existente -
+  // este chequeo es la única red que lo atrapa.
+  assert.equal(
+    filasSonPublicables([filaBase({ precio_neto: 0, precio_con_iva: null, precio_lista: 0 })]),
+    false
+  );
+});
+
+test("filasSonPublicables: precio negativo tampoco cuenta como precio valido", () => {
+  assert.equal(
+    filasSonPublicables([filaBase({ precio_neto: -100, precio_con_iva: null, precio_lista: null })]),
+    false
   );
 });
 

@@ -378,7 +378,13 @@ export async function aprobarMapeoYPublicar(
   }
 
   await upsertMapeoColumnas(carga.proveedorId, mapping, "catalogo");
-  const canonicalRows = applyMapping(headers, rows, mapping as ColumnMapping);
+  const proveedorCatalogo = await prisma.proveedor.findUniqueOrThrow({ where: { id: carga.proveedorId } });
+  const canonicalRows = applyMapping(
+    headers,
+    rows,
+    mapping as ColumnMapping,
+    proveedorCatalogo.alicuotaIvaDefault
+  );
   return publicarCanonicalRows(cargaId, carga.proveedorId, canonicalRows);
 }
 
