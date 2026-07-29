@@ -11,6 +11,7 @@
     "seed": "tsx scripts/seed-from-json.ts",
     "seed:sysadmin": "tsx scripts/seed-sysadmin.ts",
     "auto-descargas": "tsx scripts/run-auto-descargas.ts",
+    "seed:borur-auto-descargas": "tsx scripts/seed-borur-auto-descargas.ts",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
     "prisma:generate": "prisma generate"
