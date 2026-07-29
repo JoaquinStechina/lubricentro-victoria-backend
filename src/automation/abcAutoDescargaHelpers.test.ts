@@ -29,7 +29,7 @@ test("nombreArchivoDescarga: marca con espacios y puntos se sanitiza", () => {
   assert.equal(nombreArchivoDescarga("BOSCH A.", 1784828962635), "1784828962635_ABC_BOSCH_A_.xlsx");
 });
 
-test("datosNuevaCarga: arma los datos para prisma.carga.create, incluyendo porcentajeGananciaDefault", () => {
+test("datosNuevaCarga: arma los datos para prisma.carga.create, incluyendo porcentajeGananciaDefault y origen", () => {
   const fila = { proveedorId: 7, marca: "MANN", porcentajeGanancia: 53 };
   const datos = datosNuevaCarga(fila, "1_ABC_MANN.xlsx", "/app/uploads/1_ABC_MANN.xlsx");
   assert.deepEqual(datos, {
@@ -39,6 +39,7 @@ test("datosNuevaCarga: arma los datos para prisma.carga.create, incluyendo porce
     tipoArchivo: "xlsx",
     tipoDatos: "catalogo",
     estado: "pendiente",
+    origen: "auto_descarga",
     porcentajeGananciaDefault: 53,
   });
 });

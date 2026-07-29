@@ -24,6 +24,7 @@ import {
   truncarMensaje,
   hashContenidoExtraido,
 } from "./abcAutoDescargaHelpers.js";
+import { intentarAutoPublicar } from "./autoPublicacion.js";
 
 const PORTAL_URL = "https://www.abc-sa.com.ar/prices-lists-dashboard";
 const LOGIN_URL = "https://www.abc-sa.com.ar/account/login";
@@ -201,13 +202,14 @@ async function descargarYProcesarMarca(page: Page, fila: FilaConProveedor): Prom
   });
 
   await procesarCarga(carga.id);
+  const publicada = await intentarAutoPublicar(carga.id);
 
   await prisma.autoDescargaMarca.update({
     where: { id: fila.id },
     data: {
       ultimoHashArchivo: hash,
       ultimaCorridaEn: new Date(),
-      ultimoResultado: "carga_creada",
+      ultimoResultado: publicada ? "publicado_automaticamente" : "carga_creada",
       ultimaCargaId: carga.id,
     },
   });
