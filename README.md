@@ -79,6 +79,25 @@ el browser descarta la cookie sin avisar y el login queda roto en silencio.
   de alta la cuenta (autoreferencia, nullable — el primer `SYSADMIN` lo crea
   `scripts/seed-sysadmin.ts`, no tiene creador). Ver "Autenticación y roles".
 - `Proveedor` — un proveedor puede vender varias marcas.
+  `mecanismoAutoDescarga` (`"abc_portal"` | `"dropbox_directo"` | `null`)
+  determina si (y cómo) se auto-descargan sus listas de precios a diario —
+  ver "Automatización" más abajo. `urlDescargaAutomatica` (`@db.Text`, solo
+  aplica a `"dropbox_directo"`) es el link compartido único del proveedor
+  (todas sus marcas viven en el mismo archivo, a diferencia de
+  `"abc_portal"` donde cada marca se descarga por separado desde el
+  portal); se guarda como texto largo porque un link real de Dropbox
+  (`scl/fo/...?rlkey=...`) puede superar los 191 caracteres del `VARCHAR`
+  default. `alicuotaIvaDefault` (`Float?`) es el % de IVA a usar como
+  fallback cuando una fila no trae columna de IVA mapeada (ver
+  `aplicarAlicuotaIvaDefault` en "Extracción").
+- `AutoDescargaMarca` — una fila por marca a auto-descargar a diario, de un
+  proveedor con `mecanismoAutoDescarga` configurado (ver "Automatización").
+  Guarda `porcentajeGanancia` (prellena el % de ganancia en la revisión,
+  `Carga.porcentajeGananciaDefault`), `ultimoHashArchivo` (para detectar si
+  el contenido cambió desde la corrida anterior), y `ultimaCorridaEn` /
+  `ultimoResultado` / `ultimaCargaId` (estado de la última corrida, ver
+  `GET /api/auto-descargas` en Endpoints). `activo` decide si el cron diario
+  la procesa; `POST /:id/probar` la corre igual esté activa o no.
 - `ProductoPrecio` / `Oferta` — el schema canónico de `contexto.md`. Nunca se
   hace `UPDATE` destructivo de precios: cada carga nueva inserta filas con su
   propia `fechaVigencia` (`ProductoPrecio`) o `fechaOferta`/`horaOferta`
@@ -131,7 +150,15 @@ el browser descarta la cookie sin avisar y el login queda roto en silencio.
   ya conocido, mapeo aprobado de antes, solo falta confirmar los valores) →
   `completado` | `error`. **Ninguna carga se publica sola** — `procesarCarga`
   nunca llega a `completado` por sí misma, siempre hace falta la
-  confirmación humana de `POST /:id/confirmar` (ver Endpoints).
+  confirmación humana de `POST /:id/confirmar` (ver Endpoints). Única
+  excepción, acotada y explícita: las cargas con `origen: "auto_descarga"`
+  pueden saltarse esa confirmación bajo condiciones estrictas — ver
+  "Auto-publicación condicionada" en "Automatización" más abajo.
+  `origen` (`"manual"` default | `"auto_descarga"`) distingue una carga
+  subida a mano de una creada por el worker de auto-descarga; es el único
+  campo que habilita esa excepción (no se infiere de
+  `porcentajeGananciaDefault`, que puede ser `null` igual en una carga de
+  auto-descarga si la marca no tiene % configurado).
 
 ## Autenticación y roles
 
@@ -160,7 +187,7 @@ Matriz de permisos actual:
 | `PATCH /api/productos/:id`, `POST /api/productos/editar-lote`, `POST /api/productos/eliminar`, `POST /api/productos/restaurar`, `POST /api/productos` (alta manual), `POST`/`DELETE /api/productos/:id/imagen` | `ADMINISTRADOR` |
 | `PATCH /api/ofertas/:id`, `POST /api/ofertas/editar-lote`, `POST /api/ofertas/eliminar`, `POST /api/ofertas/restaurar`, `POST /api/ofertas` (alta manual), `POST`/`DELETE /api/ofertas/:id/imagen` | `ADMINISTRADOR` |
 | `?incluirEliminados=true` en los `GET` (vista papelera) | `ADMINISTRADOR` (un `EMPLEADO` que mande el flag lo tiene ignorado) |
-| `/api/uploads/*`, `/api/stats`, `/api/proveedores` (todo) | `ADMINISTRADOR` |
+| `/api/uploads/*`, `/api/stats`, `/api/proveedores`, `/api/auto-descargas/*` (todo) | `ADMINISTRADOR` |
 | `/api/usuarios/*` (todo) | `SYSADMIN` |
 
 El primer `SYSADMIN` no se crea desde la API — no hay forma de que exista
@@ -236,6 +263,18 @@ un usuario que autorice esa primera creación. Se crea con
 - `GET /api/proveedores` — lista `{id, nombre}` de proveedores existentes,
   para el autocomplete del formulario de carga (evita crear un proveedor
   duplicado por un typo en el nombre).
+- `GET /api/auto-descargas` / `POST /api/auto-descargas` / `PATCH
+  /api/auto-descargas/:id` / `DELETE /api/auto-descargas/:id` — CRUD de
+  `AutoDescargaMarca` (`ADMINISTRADOR`+), pantalla `/cargas/auto-descargas`
+  del frontend. `POST` hace `upsert` del proveedor por nombre (mismo criterio
+  que `POST /api/uploads`) para no obligar a crearlo antes a mano. Ver
+  "Automatización" más abajo para el detalle de qué hace cada fila.
+- `POST /api/auto-descargas/:id/probar` — corre la auto-descarga de esa fila
+  al toque (sin esperar al cron diario), sea `abc_portal` (~10-20s, abre
+  navegador y loguea) o `dropbox_directo` (descarga HTTP directa, más
+  rápido); el endpoint elige el mecanismo según
+  `Proveedor.mecanismoAutoDescarga`. Devuelve la fila actualizada con su
+  nuevo `ultimoResultado`; 404 si la fila se borró mientras corría la prueba.
 - `GET /api/stats` — conteo de proveedores/productos/ofertas/cargas.
 - `GET /api/productos` — catálogo "vigente" (`vigente: true`) y no eliminado
   (`eliminado: false`), opcionalmente filtrado por `?proveedorId=`, paginado
@@ -472,6 +511,30 @@ un usuario que autorice esa primera creación. Se crea con
   `applyMappingOfertas` (`mappingOfertas.ts`) y en los espejos del frontend
   (`applyMappingPreview.ts` / `applyMappingPreviewOfertas.ts`, usados para la
   vista previa instantánea en `ReviewTable.tsx`/`ReviewTableOfertas.tsx`).
+  `sku_interno`/`sku_proveedor` (`CAMPOS_CODIGO`) se combinan **sin**
+  separador en vez de con espacio (reconstruyen un código partido en dos
+  columnas, ej. "AB" + "1234" → `"AB1234"`, no `"AB 1234"`).
+  `ColumnMapping` en sí es `Record<string, CanonicalField[]>` (antes,
+  `Record<string, CanonicalField>`): una misma columna de origen puede
+  mapearse a **más de un campo destino a la vez** (ej. una columna "Código"
+  que alimenta `sku_interno` Y `sku_proveedor` con el mismo valor, cuando el
+  proveedor no distingue los dos). `applyMapping` arma primero un mapa
+  destino → lista de valores recorriendo `headers` (una columna con varios
+  destinos aporta su valor a cada uno) y recién ahí aplica
+  `combinarValores` por destino — así ambas direcciones (una columna a
+  muchos destinos, muchas columnas al mismo destino) conviven con la misma
+  lógica. `MapeoColumna.@@unique` es `[proveedorId, columnaOrigen,
+  campoDestino, tipoDatos]` (antes sin `campoDestino`) para poder guardar
+  varias filas por la misma `columnaOrigen`, una por cada `campoDestino`
+  asignado — `upsertMapeoColumnas` (`processCarga.ts`) reconcilia borrando
+  todas las filas guardadas de ese proveedor+tipoDatos y volviendo a
+  insertar las del mapeo aprobado actual, en vez de hacer upsert fila por
+  fila (más simple que diffear altas/bajas cuando el usuario puede haber
+  quitado un destino que antes tenía). El frontend expone esto con un
+  segundo `<Select>` opcional por columna en `ReviewTable.tsx`
+  (`MAPPING_SELECT_ITEMS_SECUNDARIO`), que filtra mutuamente sus opciones
+  contra el select primario para no poder elegir el mismo destino dos veces
+  en la misma columna.
 - `advertencias.ts` / `advertenciasOfertas.ts` — etapa 5 del plan original
   (ver `contexto.md`), calculada como paso aparte cuando se abre la pantalla
   de revisión (`GET /api/uploads/:id/advertencias`, ver Endpoints), no
@@ -533,6 +596,120 @@ un usuario que autorice esa primera creación. Se crea con
   SKUs por `updateMany`, no una query por fila) — todo en una transacción
   (`$transaction`, timeout de 30s para archivos grandes) para que no quede
   un estado intermedio visible.
+
+## Automatización (`src/automation/`)
+
+Descarga diaria de listas de precios sin intervención humana para subirlas,
+más una excepción acotada al invariante "ninguna carga se publica sola"
+cuando el resultado es lo bastante confiable. Dos mecanismos de descarga,
+uno de publicación:
+
+- **`abcAutoDescarga.ts`** (`mecanismoAutoDescarga: "abc_portal"`, hoy solo
+  ABC) — via Playwright: loguea contra el portal
+  (`ABC_PORTAL_USUARIO`/`ABC_PORTAL_CLAVE`/`ABC_PORTAL_COLABORADOR`, ver
+  `.env.example`), busca cada marca activa en la tabla de "Listas de
+  Precios" y descarga su Excel por separado (una `Carga` por marca, un
+  archivo por marca). No se testea unitariamente — requiere loguearse
+  contra el sitio real, no hay forma de mockearlo en CI —, se verifica a
+  mano contra el portal; los helpers puros (decidir si hace falta crear
+  `Carga`, armar nombre de archivo, etc., ver `abcAutoDescargaHelpers.ts`)
+  sí están cubiertos por tests.
+- **`dropboxAutoDescarga.ts`** (`mecanismoAutoDescarga: "dropbox_directo"`,
+  hoy solo BOR&UR) — sin portal ni login: un `fetch` directo al
+  `Proveedor.urlDescargaAutomatica` (agregando `dl=1` para pedirle a
+  Dropbox el archivo crudo en vez de la página de vista previa). A
+  diferencia de ABC, **todas las marcas del proveedor comparten un único
+  archivo** (una hoja de Excel por marca) — se descarga y extrae una sola
+  vez por proveedor, se decide para cada marca en memoria si hay cambios
+  (`filtrarPorHoja` + hash del contenido) y **recién si alguna marca los
+  tiene** se escribe el archivo a `uploads/` (evita acumular en disco una
+  copia por día que ninguna `Carga` termina referenciando, el caso más
+  común). Tampoco se testea unitariamente (HTTP real contra Dropbox); los
+  helpers puros sí (`dropboxAutoDescargaHelpers.test.ts`).
+- Ambos mecanismos comparten la lógica de decisión "¿cambió el contenido
+  desde la última corrida?" (`hashContenidoExtraido` +
+  `decidirAccion`, en `abcAutoDescargaHelpers.ts` — reusada tal cual por
+  `dropboxAutoDescarga.ts`): se hashea el contenido ya extraído
+  (headers+filas, sin `__hoja`), no los bytes del archivo, porque el xlsx
+  exportado por ABC trae metadata interna (timestamp) que cambia en cada
+  descarga aunque los precios sean idénticos. Si no cambió, solo se
+  actualiza `ultimaCorridaEn`/`ultimoResultado: "sin_cambios"`, sin crear
+  `Carga` ni tocar el archivo. Si cambió, crea una `Carga` con `origen:
+  "auto_descarga"`, corre `procesarCarga` (mismo pipeline de
+  extracción/mapeo que una carga manual, sin cambios) y después intenta
+  auto-publicarla (ver abajo). Cualquier error en una marca (login,
+  descarga, extracción) se guarda truncado en `ultimoResultado`
+  (`truncarMensaje`, `VARCHAR(191)`) sin abortar el resto de las marcas —
+  un proveedor/marca rota no bloquea a las demás.
+- **Disparadores**: `backend/scripts/run-auto-descargas.ts` (pensado para
+  cron diario en el VPS — ver `infra/README.md` —, corre los dos mecanismos
+  en secuencia y aislados entre sí: si uno falla el otro corre igual) y
+  `POST /api/auto-descargas/:id/probar` (una sola fila, al toque, ver
+  Endpoints).
+
+### Auto-publicación condicionada (`autoPublicacion.ts`)
+
+**El invariante de siempre no cambia**: `procesarCarga` nunca deja una carga
+en `completado` por sí misma. Lo que se agregó es un paso extra, después de
+`procesarCarga`, que **solo corre para cargas de auto-descarga**
+(`Carga.origen === "auto_descarga"`, nunca para una carga subida a mano) y
+que decide si esta carga puntual es lo bastante confiable como para no
+necesitar que un humano la mire. `intentarAutoPublicar(cargaId)` exige,
+**todas** las condiciones a la vez:
+
+1. `carga.origen === "auto_descarga"` y tiene proveedor/`filasExtraidas`/
+   `mapeoSugerido` (si `procesarCarga` falló antes de llegar ahí, no hay
+   nada que publicar).
+2. `carga.estado === "confirmacion_pendiente"` — el mapeo ya era conocido
+   de antes (`MapeoColumna` ya tenía filas para este proveedor). Una carga
+   en `revision_pendiente` (proveedor nuevo, o le cambiaron los headers, el
+   mapeo es una sugerencia de IA sin aprobar) **nunca** se auto-publica, sin
+   excepción — este chequeo se hace antes de pedir advertencias a propósito
+   (evita una query random cara en el caso más común al dar de alta muchas
+   marcas nuevas de una, donde la primera corrida de cada una siempre cae
+   en `revision_pendiente`).
+3. Cero advertencias (`detectarAdvertencias`, ver "Extracción"): ni precio
+   ≤ 0, ni SKU duplicado, ni salto de precio ±30% contra la última carga
+   conocida de ese proveedor+SKU.
+4. `filasSonPublicables` (`autoPublicacionHelpers.ts`) — un chequeo de
+   sanidad **extra**, más allá de "sin advertencias": exige que cada fila
+   tenga algún identificador (`sku_proveedor` o `sku_interno`), una
+   `descripcion`, y **al menos un precio con valor positivo** entre
+   `precio_neto`/`precio_con_iva`/`precio_lista` (no alcanza con "no nulo":
+   `detectarAdvertencias` nunca mira `precio_lista`, así que un mapeo que
+   solo llena ese campo, en cero, pasaría el chequeo de advertencias
+   igual). Hace falta porque `MapeoColumna` es por **proveedor**, no por
+   marca: un proveedor con muchas hojas en un solo archivo (ej. BOR&UR,
+   25 marcas) puede reusar por casualidad un mapeo guardado de **otra**
+   marca cuyos nombres de columna coinciden con los de esta, sin que
+   ningún header realmente relevante (el código de producto) haya sido
+   mapeado de verdad. Confirmado en vivo: la primera corrida de Tecfil
+   (BOR&UR) se auto-publicó así, con 1675 filas sin `sku_proveedor` ni
+   `sku_interno`, ninguna atrapada por `detectarAdvertencias` (que no
+   chequea "sin identificador"). No exige `sku_proveedor` específicamente
+   porque algunas marcas de BOR&UR (Silisur, Tribuno) no lo tienen por
+   diseño — alcanza con que la fila tenga *algún* identificador.
+
+Si las cuatro se cumplen, aplica el mapeo (`applyMapping`, con el
+`alicuotaIvaDefault` del proveedor — ver más abajo) y publica con
+`confirmarCargaYPublicar`, el mismo camino que usa la confirmación humana
+manual. Si no, la carga queda tal cual la dejó `procesarCarga`
+(`confirmacion_pendiente` o `revision_pendiente`) esperando revisión en
+`/cargas`, exactamente como antes de que existiera esta función.
+`AutoDescargaMarca.ultimoResultado` queda en `"publicado_automaticamente"`
+o `"carga_creada"` según el resultado (`AutoDescargasView.tsx` en el
+frontend muestra ambos con el mismo link a la carga, con badge distinto).
+
+**`alicuotaIvaDefault` por proveedor** (`Proveedor.alicuotaIvaDefault`):
+fallback de IVA cuando una fila no trae columna de IVA mapeada — `null` no
+inventa nada (comportamiento de siempre). Se aplica en los **tres** caminos
+de publicación por igual (`aplicarAlicuotaIvaDefault`, extraída en
+`mapping.ts` justamente para no duplicar esta regla): `applyMapping` (usada
+por auto-publicación y por `aprobarMapeoYPublicar`, el endpoint legado) y
+`confirmarCargaYPublicar` (la confirmación manual desde `ReviewTable.tsx`,
+el camino más común — no pasa por `applyMapping`, así que sin este fallback
+explícito el default de IVA solo se hubiera aplicado en cargas
+auto-publicadas, nunca en las confirmadas a mano).
 
 ## Pendiente
 
