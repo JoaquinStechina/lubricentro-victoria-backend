@@ -21,6 +21,7 @@ export const productosRouter = Router();
 const COLUMNAS_TEXTO: Record<string, keyof Prisma.ProductoPrecioWhereInput> = {
   marca: "marca",
   sku: "skuInterno", // se resuelve especial más abajo (también matchea skuProveedor)
+  skuProveedor: "skuProveedor",
   descripcion: "descripcion",
   seccion: "seccion",
   fechaVigencia: "fechaVigencia",
@@ -48,6 +49,7 @@ const PRODUCTOS_SORTABLE: Record<
   proveedor: (o) => ({ proveedor: { nombre: o } }),
   marca: (o) => ({ marca: o }),
   sku: (o) => ({ skuInterno: o }),
+  skuProveedor: (o) => ({ skuProveedor: o }),
   descripcion: (o) => ({ descripcion: o }),
   seccion: (o) => ({ seccion: o }),
   precioNeto: (o) => ({ precioNeto: o }),

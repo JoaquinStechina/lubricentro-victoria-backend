@@ -287,16 +287,19 @@ un usuario que autorice esa primera creación. Se crea con
   sobrestimar temporalmente en esos casos. Admite `?search=` (texto libre,
   `contains` OR sobre proveedor/marca/sku/descripción/sección/vigencia) y
   `?f_<columna>=` por columna (`f_proveedor`, `f_marca`, `f_sku` — matchea
-  interno o de proveedor —, `f_descripcion`, `f_seccion`, `f_unidad`,
+  interno o de proveedor —, `f_skuProveedor` (columna aparte, solo
+  `skuProveedor`), `f_descripcion`, `f_seccion`, `f_unidad`,
   `f_fechaVigencia` con `contains`; `f_alicuotaIva` con igualdad exacta;
   `f_precioNetoMin/Max` y `f_precioConIvaMin/Max` como rango `gte`/`lte`,
   cada extremo opcional). Admite `?sort=<columna>&order=asc|desc` contra una
-  whitelist explícita (proveedor, marca, sku, descripcion, seccion,
-  precioNeto, precioConIva, alicuotaIva, fechaVigencia), con desempate por
-  `createdAt desc`; sin `sort` válido queda el orden por fecha de carga. Dos
-  limitaciones del sort documentadas a propósito: "sku" ordena solo por
-  `skuInterno` aunque la celda del frontend muestre `skuInterno ??
-  skuProveedor` (Prisma no hace coalesce en `orderBy`), y en los grupos
+  whitelist explícita (proveedor, marca, sku, skuProveedor, descripcion,
+  seccion, precioNeto, precioConIva, alicuotaIva, fechaVigencia), con
+  desempate por `createdAt desc`; sin `sort` válido queda el orden por fecha
+  de carga. Dos limitaciones del sort documentadas a propósito: "sku" ordena
+  solo por `skuInterno` aunque la celda del frontend muestre `skuInterno ??
+  skuProveedor` (Prisma no hace coalesce en `orderBy` — para ordenar por el
+  SKU del proveedor específicamente está la columna aparte `skuProveedor`),
+  y en los grupos
   legacy con duplicados (todas `vigente: true`) el `distinct` se queda con
   la primera fila según el orden elegido, que puede no ser "la más nueva"
   del grupo — misma clase de limitación que el `total`, se autocorrige con
