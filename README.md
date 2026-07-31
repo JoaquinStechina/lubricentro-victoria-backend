@@ -711,6 +711,26 @@ el camino más común — no pasa por `applyMapping`, así que sin este fallback
 explícito el default de IVA solo se hubiera aplicado en cargas
 auto-publicadas, nunca en las confirmadas a mano).
 
+**`precio_con_iva` cuando el IVA sale del default, no de una columna**
+(`calcularPrecioConIvaDesdeNeto`, `mapping.ts`): `aplicarAlicuotaIvaDefault`
+solo completa el campo `alicuota_iva`, nunca calculó `precio_con_iva` a
+partir de él — para un proveedor que sí mapea una columna de IVA no era
+problema (`precio_con_iva` venía de su propia columna, o `ReviewTable.tsx`
+lo derivaba en el cliente), pero para BOR&UR (que nunca trae columna de IVA,
+todo sale del default) `precio_con_iva` quedaba en `null` siempre, tanto en
+cargas auto-publicadas como confirmadas a mano. `calcularPrecioConIvaDesdeNeto`
+corre siempre después de `aplicarAlicuotaIvaDefault` en los mismos tres
+caminos (`applyMapping`, `aprobarMapeoYPublicar` y `confirmarCargaYPublicar`)
+y calcula `precio_neto + precio_neto * alicuota_iva/100` cuando falta
+`precio_con_iva` y ya hay `precio_neto` + `alicuota_iva` disponibles — sin
+importar si el IVA vino de una columna mapeada o del default; nunca pisa un
+`precio_con_iva` que ya tenga valor. Del lado del frontend, `ReviewTable.tsx`
+ahora hace el mismo autocompletado por fila si el proveedor tiene
+`alicuotaIvaDefault` configurado (antes el cálculo de `precio_con_iva` en
+pantalla dependía estrictamente de haber mapeado una columna de IVA, algo
+estructuralmente imposible para BOR&UR), así el humano ve el precio correcto
+al revisar en vez de recién al confirmar.
+
 **`precio_sugerido` en cargas auto-publicadas**: `precio_sugerido` nunca se
 mapea de una columna (no es un `CanonicalField`) — normalmente lo calcula
 `ReviewTable.tsx` del lado del cliente, a partir de `precio_con_iva` + un %
@@ -728,10 +748,12 @@ fuera de este cambio porque nadie lo pidió todavía, ver "Pendiente".
 
 ## Pendiente
 
-- `precio_lista_con_iva` no se calcula en cargas auto-publicadas (ver
-  "Automatización") — mismo origen que `precio_sugerido` (calculado en
-  `ReviewTable.tsx`, nunca mapeado de una columna), pero no se le agregó el
-  mismo fallback porque no había un caso real que lo necesitara todavía.
+- `precio_lista_con_iva` no se calcula en cargas auto-publicadas ni cuando el
+  IVA sale del default por proveedor (ver "Automatización") — mismo origen
+  que `precio_sugerido` (calculado en `ReviewTable.tsx`, nunca mapeado de una
+  columna), pero a diferencia de `precio_con_iva` (ver
+  `calcularPrecioConIvaDesdeNeto`) no se le agregó el mismo fallback porque
+  no había un caso real que lo necesitara todavía — sigue sin resolver.
 - Cola/worker en vez de procesar sincrónicamente en el request — para
   archivos grandes o con muchas páginas de PDF, `POST /:id/procesar` puede
   tardar 1-2 minutos con el usuario esperando.

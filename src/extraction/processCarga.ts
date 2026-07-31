@@ -9,6 +9,7 @@ import {
   applyMapping,
   normalizeCanonicalRow,
   aplicarAlicuotaIvaDefault,
+  calcularPrecioConIvaDesdeNeto,
 } from "./mapping.js";
 import {
   getExistingMappingOferta,
@@ -408,9 +409,10 @@ export async function confirmarCargaYPublicar(
   // proveedor) — sin esto, Proveedor.alicuotaIvaDefault solo se aplicaría en
   // el camino de auto-publicación, nunca cuando un humano confirma a mano.
   const proveedor = await prisma.proveedor.findUniqueOrThrow({ where: { id: carga.proveedorId } });
-  const canonicalRows = filasFinales.map((fila) =>
-    aplicarAlicuotaIvaDefault(normalizeCanonicalRow(fila), proveedor.alicuotaIvaDefault)
-  );
+  const canonicalRows = filasFinales.map((fila) => {
+    const conIvaDefault = aplicarAlicuotaIvaDefault(normalizeCanonicalRow(fila), proveedor.alicuotaIvaDefault);
+    return calcularPrecioConIvaDesdeNeto(conIvaDefault);
+  });
   return publicarCanonicalRows(cargaId, carga.proveedorId, canonicalRows);
 }
 

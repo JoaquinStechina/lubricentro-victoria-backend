@@ -321,7 +321,8 @@ export function applyMapping(
     }
 
     const normalizado = normalizeCanonicalRow({ ...canonical, raw_data: rawData });
-    return aplicarAlicuotaIvaDefault(normalizado, alicuotaIvaDefault);
+    const conIvaDefault = aplicarAlicuotaIvaDefault(normalizado, alicuotaIvaDefault);
+    return calcularPrecioConIvaDesdeNeto(conIvaDefault);
   });
 }
 
@@ -337,6 +338,26 @@ export function aplicarAlicuotaIvaDefault<T extends { alicuota_iva: number | nul
 ): T {
   if (row.alicuota_iva === null && alicuotaIvaDefault != null) {
     return { ...row, alicuota_iva: roundTo2(alicuotaIvaDefault) };
+  }
+  return row;
+}
+
+// Cuando falta precio_con_iva pero sí hay precio_neto y alicuota_iva (mapeada
+// desde una columna, o completada recién por aplicarAlicuotaIvaDefault — este
+// helper no distingue el origen, corre siempre después), no hay forma de que
+// el archivo traiga un "precio con IVA" que nunca existió — hay que
+// calcularlo. Mismo criterio que ReviewTable.tsx usa del lado del cliente
+// cuando hay una columna de IVA mapeada (precio_neto + precio_neto*iva/100),
+// aplicado acá también server-side para proveedores como BOR&UR, cuyo
+// archivo nunca trae columna de IVA (todo sale del default por proveedor).
+// Nunca pisa un precio_con_iva que ya tenga valor (ej. vino de una columna
+// mapeada directamente).
+export function calcularPrecioConIvaDesdeNeto<
+  T extends { precio_neto: number | null; precio_con_iva: number | null; alicuota_iva: number | null },
+>(row: T): T {
+  if (row.precio_con_iva === null && row.precio_neto != null && row.alicuota_iva != null) {
+    const precioConIva = row.precio_neto + (row.precio_neto * row.alicuota_iva) / 100;
+    return { ...row, precio_con_iva: roundTo2(precioConIva) };
   }
   return row;
 }

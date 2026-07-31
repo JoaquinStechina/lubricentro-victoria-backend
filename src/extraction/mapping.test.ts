@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyMapping, toNumberOrNull, aplicarAlicuotaIvaDefault, calcularPrecioSugerido } from "./mapping.js";
+import {
+  applyMapping,
+  toNumberOrNull,
+  aplicarAlicuotaIvaDefault,
+  calcularPrecioSugerido,
+  calcularPrecioConIvaDesdeNeto,
+} from "./mapping.js";
 import type { ColumnMapping } from "./types.js";
 
 // Casos reales relevados en ofertas/ofertas baterías autos bosch.xls y en
@@ -197,4 +203,43 @@ test("calcularPrecioSugerido: sin precio_con_iva, deja precio_sugerido en null",
 test("calcularPrecioSugerido: redondea a 2 decimales", () => {
   const row = { precio_con_iva: 333.33, precio_sugerido: null };
   assert.deepEqual(calcularPrecioSugerido(row, 17.5), { precio_con_iva: 333.33, precio_sugerido: 391.66 });
+});
+
+// Caso real: BOR&UR nunca trae columna de IVA en el archivo (el Excel de
+// Dropbox no la muestra) — sin este cálculo, precio_con_iva quedaba null
+// para siempre aunque alicuota_iva ya se hubiera completado con el default
+// del proveedor (21%, ver aplicarAlicuotaIvaDefault).
+test("calcularPrecioConIvaDesdeNeto: completa precio_con_iva a partir de precio_neto + alicuota_iva", () => {
+  const row = { precio_neto: 1000, precio_con_iva: null, alicuota_iva: 21 };
+  assert.deepEqual(calcularPrecioConIvaDesdeNeto(row), { precio_neto: 1000, precio_con_iva: 1210, alicuota_iva: 21 });
+});
+
+test("calcularPrecioConIvaDesdeNeto: no pisa un precio_con_iva que ya tiene valor", () => {
+  const row = { precio_neto: 1000, precio_con_iva: 9999, alicuota_iva: 21 };
+  assert.deepEqual(calcularPrecioConIvaDesdeNeto(row), row);
+});
+
+test("calcularPrecioConIvaDesdeNeto: sin precio_neto o sin alicuota_iva, deja precio_con_iva en null", () => {
+  const sinNeto = { precio_neto: null, precio_con_iva: null, alicuota_iva: 21 };
+  assert.deepEqual(calcularPrecioConIvaDesdeNeto(sinNeto), sinNeto);
+  const sinIva = { precio_neto: 1000, precio_con_iva: null, alicuota_iva: null };
+  assert.deepEqual(calcularPrecioConIvaDesdeNeto(sinIva), sinIva);
+});
+
+// End-to-end con applyMapping: mapeo real de BOR&UR (sku_proveedor,
+// descripcion, precio_neto — sin ninguna columna de IVA ni precio_con_iva),
+// más el alicuotaIvaDefault del proveedor (21) — reproduce exactamente el
+// caso reportado: sin este fix, precio_con_iva quedaba null en el catálogo.
+test("applyMapping: proveedor sin columna de IVA (BOR&UR) infiere precio_con_iva del default", () => {
+  const headers = ["MODELO", "APLICACIÓN", "PRECIO S/IVA"];
+  const rows = [{ MODELO: "ABC123", APLICACIÓN: "Filtro de aceite", "PRECIO S/IVA": 1000 }];
+  const mapping: ColumnMapping = {
+    MODELO: ["sku_proveedor"],
+    APLICACIÓN: ["descripcion"],
+    "PRECIO S/IVA": ["precio_neto"],
+  };
+  const [row] = applyMapping(headers, rows, mapping, 21);
+  assert.equal(row.precio_neto, 1000);
+  assert.equal(row.alicuota_iva, 21);
+  assert.equal(row.precio_con_iva, 1210);
 });
