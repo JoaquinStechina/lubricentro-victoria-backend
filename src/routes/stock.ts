@@ -2,7 +2,7 @@ import { Router } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { enviarExport, type FilaExport } from "./exportar.js";
-import { normalizarCodigo, calcularDelta, esTipoMovimiento } from "../lib/stock.js";
+import { normalizarCodigo, calcularDelta, esTipoMovimiento, elegirMasBarato } from "../lib/stock.js";
 
 export const stockRouter = Router();
 
@@ -370,4 +370,59 @@ stockRouter.post("/:id/movimientos", async (req, res) => {
   });
 
   res.status(201).json(movimiento);
+});
+
+// Artículos en o bajo el mínimo, cada uno con el proveedor más barato que
+// venda hoy ese código.
+//
+// El match es por código normalizado contra las filas VIGENTES del catálogo.
+// ProductoPrecio no tiene columna normalizada, así que la normalización se
+// hace en SQL. A ~15.000 filas vigentes el scan es de milisegundos; si el
+// catálogo crece mucho, la optimización es agregar skuNorm a ProductoPrecio
+// y poblarlo en processCarga.
+stockRouter.get("/reposicion", async (_req, res) => {
+  const articulos = await prisma.$queryRaw<
+    { id: number; marca: string; codigo: string; codigoNorm: string; descripcion: string; cantidad: number; minimo: number }[]
+  >`
+    SELECT id, marca, codigo, codigoNorm, descripcion, cantidad, minimo
+    FROM articulos_stock
+    WHERE eliminado = false AND minimo IS NOT NULL AND cantidad <= minimo
+    ORDER BY (cantidad - minimo) ASC
+  `;
+
+  if (articulos.length === 0) {
+    res.json({ items: [] });
+    return;
+  }
+
+  const codigos = articulos.map((a) => a.codigoNorm);
+  const candidatos = await prisma.$queryRaw<
+    { codigoNorm: string; proveedor: string; precio: number | null }[]
+  >`
+    SELECT
+      UPPER(REPLACE(REPLACE(REPLACE(REPLACE(pp.skuProveedor,' ',''),'-',''),'.',''),'/','')) AS codigoNorm,
+      p.nombre AS proveedor,
+      COALESCE(pp.precioConIva, pp.precioNeto) AS precio
+    FROM productos_precios pp
+    JOIN proveedores p ON p.id = pp.proveedorId
+    WHERE pp.vigente = true
+      AND pp.eliminado = false
+      AND pp.skuProveedor IS NOT NULL
+      AND UPPER(REPLACE(REPLACE(REPLACE(REPLACE(pp.skuProveedor,' ',''),'-',''),'.',''),'/','')) IN (${Prisma.join(codigos)})
+  `;
+
+  const porCodigo = new Map<string, { proveedor: string; precio: number | null }[]>();
+  for (const c of candidatos) {
+    const lista = porCodigo.get(c.codigoNorm) ?? [];
+    lista.push({ proveedor: c.proveedor, precio: c.precio });
+    porCodigo.set(c.codigoNorm, lista);
+  }
+
+  const items = articulos.map((a) => ({
+    ...a,
+    faltante: a.minimo - a.cantidad,
+    mejorOpcion: elegirMasBarato(porCodigo.get(a.codigoNorm) ?? []),
+  }));
+
+  res.json({ items });
 });
