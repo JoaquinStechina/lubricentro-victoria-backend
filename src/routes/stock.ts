@@ -2,7 +2,7 @@ import { Router } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
 import { enviarExport, type FilaExport } from "./exportar.js";
-import { normalizarCodigo } from "../lib/stock.js";
+import { normalizarCodigo, calcularDelta, esTipoMovimiento } from "../lib/stock.js";
 
 export const stockRouter = Router();
 
@@ -280,4 +280,94 @@ stockRouter.post("/restaurar", async (req, res) => {
     data: { eliminado: false },
   });
   res.json({ restaurados: count });
+});
+
+// Feed global de movimientos, con filtros opcionales por artículo, tipo y rango de fechas.
+stockRouter.get("/movimientos", async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(500, Math.max(1, Number(req.query.pageSize) || 50));
+
+  const where: Prisma.MovimientoStockWhereInput = {};
+  if (req.query.articuloId) {
+    const articuloId = Number(req.query.articuloId);
+    if (Number.isInteger(articuloId)) where.articuloId = articuloId;
+  }
+  if (typeof req.query.tipo === "string" && esTipoMovimiento(req.query.tipo)) {
+    where.tipo = req.query.tipo;
+  }
+  const desde = typeof req.query.desde === "string" ? new Date(req.query.desde) : null;
+  const hasta = typeof req.query.hasta === "string" ? new Date(req.query.hasta) : null;
+  if ((desde && !isNaN(desde.getTime())) || (hasta && !isNaN(hasta.getTime()))) {
+    where.createdAt = {};
+    if (desde && !isNaN(desde.getTime())) where.createdAt.gte = desde;
+    // hasta inclusive: se suma un día porque el input manda una fecha sin hora.
+    if (hasta && !isNaN(hasta.getTime())) {
+      where.createdAt.lt = new Date(hasta.getTime() + 24 * 60 * 60 * 1000);
+    }
+  }
+
+  const [total, items] = await Promise.all([
+    prisma.movimientoStock.count({ where }),
+    prisma.movimientoStock.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+      include: { articulo: { select: { id: true, marca: true, codigo: true, descripcion: true } } },
+    }),
+  ]);
+
+  res.json({ items, total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) });
+});
+
+stockRouter.get("/:id/movimientos", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: "Id inválido." });
+    return;
+  }
+  const items = await prisma.movimientoStock.findMany({
+    where: { articuloId: id },
+    orderBy: { createdAt: "desc" },
+  });
+  res.json({ items });
+});
+
+stockRouter.post("/:id/movimientos", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id)) {
+    res.status(400).json({ error: "Id inválido." });
+    return;
+  }
+  const { tipo, cantidad, motivo } = req.body ?? {};
+  if (!esTipoMovimiento(tipo)) {
+    res.status(400).json({ error: "Tipo inválido: se espera entrada, salida o ajuste." });
+    return;
+  }
+  if (!Number.isInteger(cantidad) || cantidad < 0) {
+    res.status(400).json({ error: "La cantidad debe ser un entero no negativo." });
+    return;
+  }
+
+  const articulo = await prisma.articuloStock.findUnique({ where: { id } });
+  if (!articulo) {
+    res.status(404).json({ error: "Artículo no encontrado." });
+    return;
+  }
+
+  const delta = calcularDelta(tipo, cantidad, articulo.cantidad);
+  const cantidadResultante = articulo.cantidad + delta;
+
+  // Transacción: el movimiento y la cantidad del artículo se escriben juntos
+  // o no se escribe ninguno. Es lo que garantiza que `cantidad` (que está
+  // denormalizada) nunca quede desfasada del historial.
+  const movimiento = await prisma.$transaction(async (tx) => {
+    const creado = await tx.movimientoStock.create({
+      data: { articuloId: id, tipo, delta, cantidadResultante, motivo: textoONull(motivo) },
+    });
+    await tx.articuloStock.update({ where: { id }, data: { cantidad: cantidadResultante } });
+    return creado;
+  });
+
+  res.status(201).json(movimiento);
 });
