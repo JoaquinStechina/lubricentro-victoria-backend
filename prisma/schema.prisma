@@ -235,3 +235,59 @@ model Carga {
 
   @@map("cargas")
 }
+
+// Inventario propio del lubricentro. Deliberadamente separado de
+// ProductoPrecio (que es el catálogo de listas de PROVEEDOR, versionado por
+// `vigente` y con una fila por proveedor): en el estante hay una sola caja
+// con una sola cantidad. El vínculo con el catálogo se resuelve por
+// codigoNorm en la consulta, sin foreign key — ver GET /api/stock/reposicion.
+model ArticuloStock {
+  id          Int      @id @default(autoincrement())
+  marca       String
+  codigo      String
+  // UPPER + sin espacios, guiones, puntos ni barras. Lo calcula el backend
+  // (normalizarCodigo en src/lib/stock.ts) en cada alta y en cada edición que
+  // toque `codigo`; el cliente nunca lo manda. Guardado, no computado en la
+  // query, para poder indexarlo.
+  codigoNorm  String
+  descripcion String   @db.Text
+  categoria   String?
+  ubicacion   String?
+  // Derivado de los movimientos pero persistido: la lista de artículos es la
+  // vista principal y paginada, y un SUM por fila se degrada a medida que
+  // crecen los movimientos. Se actualiza en la misma transacción que inserta
+  // el movimiento, así no puede quedar desfasado.
+  cantidad    Int      @default(0)
+  // Umbral de reposición. null = el artículo no participa de las alertas.
+  minimo      Int?
+  // Borrado lógico, mismo criterio que ProductoPrecio y Oferta.
+  eliminado   Boolean  @default(false)
+  movimientos MovimientoStock[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([marca, codigo])
+  @@index([codigoNorm])
+  @@index([categoria])
+  @@map("articulos_stock")
+}
+
+model MovimientoStock {
+  id                 Int           @id @default(autoincrement())
+  articuloId         Int
+  articulo           ArticuloStock @relation(fields: [articuloId], references: [id])
+  // "entrada" | "salida" | "ajuste"
+  tipo               String
+  // Con signo: entrada positivo, salida negativo, ajuste la diferencia contra
+  // lo que había. Unifica la aritmética de los tres tipos.
+  delta              Int
+  // Foto del stock inmediatamente después de este movimiento. Sin esto,
+  // auditar "¿cuándo se descuadró?" obliga a re-sumar desde el origen.
+  cantidadResultante Int
+  motivo             String?       @db.Text
+  createdAt          DateTime      @default(now())
+
+  @@index([articuloId])
+  @@index([createdAt])
+  @@map("movimientos_stock")
+}
