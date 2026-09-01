@@ -7,6 +7,7 @@ import { proveedoresRouter } from "./routes/proveedores.js";
 import { productosRouter } from "./routes/productos.js";
 import { ofertasRouter } from "./routes/ofertas.js";
 import { autoDescargasRouter } from "./routes/autoDescargas.js";
+import { stockRouter } from "./routes/stock.js";
 import { IMAGENES_DIR } from "./lib/imagenes.js";
 
 const app = express();
@@ -30,6 +31,7 @@ app.use("/api/proveedores", proveedoresRouter);
 app.use("/api/productos", productosRouter);
 app.use("/api/ofertas", ofertasRouter);
 app.use("/api/auto-descargas", autoDescargasRouter);
+app.use("/api/stock", stockRouter);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   console.error(err);
