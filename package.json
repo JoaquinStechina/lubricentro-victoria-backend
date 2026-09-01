@@ -9,7 +9,6 @@
     "start": "node dist/src/server.js",
     "test": "tsx --test src/**/*.test.ts",
     "seed": "tsx scripts/seed-from-json.ts",
-    "seed:sysadmin": "tsx scripts/seed-sysadmin.ts",
     "auto-descargas": "tsx scripts/run-auto-descargas.ts",
     "seed:borur-auto-descargas": "tsx scripts/seed-borur-auto-descargas.ts",
     "prisma:migrate": "prisma migrate dev",
@@ -18,12 +17,9 @@
   },
   "dependencies": {
     "@prisma/client": "^6.3.1",
-    "bcryptjs": "^3.0.3",
-    "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",
     "dotenv": "^16.4.7",
     "express": "^4.21.2",
-    "jsonwebtoken": "^9.0.3",
     "multer": "^2.2.0",
     "openai": "^6.48.0",
     "pdf-to-img": "^6.2.0",
@@ -31,11 +27,8 @@
     "xlsx": "https://cdn.sheetjs.com/xlsx-latest/xlsx-latest.tgz"
   },
   "devDependencies": {
-    "@types/bcryptjs": "^2.4.6",
-    "@types/cookie-parser": "^1.4.10",
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
-    "@types/jsonwebtoken": "^9.0.10",
     "@types/multer": "^2.2.0",
     "@types/node": "^22.10.7",
     "prisma": "^6.3.1",

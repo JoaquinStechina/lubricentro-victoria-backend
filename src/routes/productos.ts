@@ -1,7 +1,6 @@
 import { Router } from "express";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
-import { requireRole } from "../middleware/auth.js";
 import { enviarExport, type FilaExport } from "./exportar.js";
 import { imagenUploadSingle, imagenPublicUrl, eliminarArchivoImagen } from "../lib/imagenes.js";
 import { roundTo2 } from "../lib/numeros.js";
@@ -62,21 +61,15 @@ const PRODUCTOS_SORTABLE: Record<
 };
 
 // Papelera: con ?incluirEliminados=true la tabla pasa a mostrar SOLO las
-// filas eliminadas (vista dedicada, no mezcladas con las vivas), y
-// únicamente para ADMINISTRADOR+ — si un EMPLEADO manda el flag a mano se
-// ignora (los GET no tienen requireRole, así que se chequea acá).
-export function vistaPapelera(req: {
-  query: Record<string, unknown>;
-  user?: { rol: string };
-}): boolean {
-  return req.query.incluirEliminados === "true" && !!req.user && req.user.rol !== "EMPLEADO";
+// filas eliminadas (vista dedicada, no mezcladas con las vivas).
+export function vistaPapelera(req: { query: Record<string, unknown> }): boolean {
+  return req.query.incluirEliminados === "true";
 }
 
 // Construye el where de GET / a partir de los query params — extraído para
 // reusarlo en /export sin duplicar la lógica de filtros.
 export function buildProductosWhere(req: {
   query: Record<string, unknown>;
-  user?: { rol: string };
 }): Prisma.ProductoPrecioWhereInput {
   const proveedorId = req.query.proveedorId ? Number(req.query.proveedorId) : undefined;
   const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
@@ -161,9 +154,8 @@ export function buildProductosOrderBy(req: {
 }
 
 // Exporta el resultado filtrado COMPLETO (mismos filtros y orden que GET /,
-// sin paginar) como CSV o XLSX. Mismo rol que la lectura (EMPLEADO): es
-// exactamente la misma data que ya ve en pantalla. El select explícito
-// evita cargar rawData (JSON potencialmente grande) en memoria.
+// sin paginar) como CSV o XLSX. El select explícito evita cargar rawData
+// (JSON potencialmente grande) en memoria.
 productosRouter.get("/export", async (req, res) => {
   const productos = await prisma.productoPrecio.findMany({
     where: buildProductosWhere(req),
@@ -373,7 +365,7 @@ async function resolverProveedor(body: {
 // Alta manual de un producto suelto, en paralelo al pipeline de carga masiva
 // de archivos (/api/uploads). Body: {proveedorId|proveedorNombre, ...campos
 // de SINGLE_EDIT_FIELDS}.
-productosRouter.post("/", requireRole("ADMINISTRADOR"), async (req, res) => {
+productosRouter.post("/", async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const proveedorId = await resolverProveedor(body);
   if (!proveedorId) {
@@ -451,7 +443,7 @@ productosRouter.get("/:id/historial", async (req, res) => {
 // como son rutas con método/verbo distinto de PATCH /:id no colisionan en
 // la práctica; se registran en este orden igual por claridad y consistencia
 // con el resto del archivo).
-productosRouter.post("/editar-lote", requireRole("ADMINISTRADOR"), async (req, res) => {
+productosRouter.post("/editar-lote", async (req, res) => {
   const b = (req.body ?? {}) as { ids?: unknown; field?: unknown; value?: unknown };
   const ids = Array.isArray(b.ids) ? b.ids.filter((v) => Number.isFinite(Number(v))).map(Number) : [];
   const field = typeof b.field === "string" ? b.field : "";
@@ -473,7 +465,7 @@ productosRouter.post("/editar-lote", requireRole("ADMINISTRADOR"), async (req, r
   res.json({ actualizados: count });
 });
 
-productosRouter.post("/eliminar", requireRole("ADMINISTRADOR"), async (req, res) => {
+productosRouter.post("/eliminar", async (req, res) => {
   const b = (req.body ?? {}) as { ids?: unknown };
   const ids = Array.isArray(b.ids) ? b.ids.filter((v) => Number.isFinite(Number(v))).map(Number) : [];
   if (ids.length === 0) {
@@ -488,7 +480,7 @@ productosRouter.post("/eliminar", requireRole("ADMINISTRADOR"), async (req, res)
 });
 
 // Espejo de /eliminar: saca filas de la papelera (ver vistaPapelera).
-productosRouter.post("/restaurar", requireRole("ADMINISTRADOR"), async (req, res) => {
+productosRouter.post("/restaurar", async (req, res) => {
   const b = (req.body ?? {}) as { ids?: unknown };
   const ids = Array.isArray(b.ids) ? b.ids.filter((v) => Number.isFinite(Number(v))).map(Number) : [];
   if (ids.length === 0) {
@@ -502,7 +494,7 @@ productosRouter.post("/restaurar", requireRole("ADMINISTRADOR"), async (req, res
   res.json({ restaurados: count });
 });
 
-productosRouter.patch("/:id", requireRole("ADMINISTRADOR"), async (req, res) => {
+productosRouter.patch("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const objetivo = await prisma.productoPrecio.findUnique({ where: { id } });
   if (!objetivo || objetivo.eliminado) {
@@ -528,7 +520,6 @@ productosRouter.patch("/:id", requireRole("ADMINISTRADOR"), async (req, res) => 
 // borrar el archivo físico viejo (ver eliminarArchivoImagen).
 productosRouter.post(
   "/:id/imagen",
-  requireRole("ADMINISTRADOR"),
   imagenUploadSingle,
   async (req, res) => {
     if (!req.file) {
@@ -555,7 +546,7 @@ productosRouter.post(
   }
 );
 
-productosRouter.delete("/:id/imagen", requireRole("ADMINISTRADOR"), async (req, res) => {
+productosRouter.delete("/:id/imagen", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const objetivo = await prisma.productoPrecio.findUnique({ where: { id } });

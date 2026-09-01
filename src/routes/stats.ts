@@ -1,10 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../db.js";
-import { requireRole } from "../middleware/auth.js";
 
 export const statsRouter = Router();
-
-statsRouter.use(requireRole("ADMINISTRADOR"));
 
 // Smoke test rápido para confirmar que la data sembrada (seed) está
 // disponible vía Prisma. La API de consulta con filtros/paginación

@@ -3,7 +3,6 @@ import multer from "multer";
 import path from "node:path";
 import fs from "node:fs";
 import { prisma } from "../db.js";
-import { requireRole } from "../middleware/auth.js";
 import {
   procesarCarga,
   aprobarMapeoYPublicar,
@@ -60,8 +59,6 @@ const upload = multer({
 });
 
 export const uploadsRouter = Router();
-
-uploadsRouter.use(requireRole("ADMINISTRADOR"));
 
 // Valida el shape de "mapeo" (columnaOrigen -> campoDestino) compartido por
 // /aprobar-mapeo y /confirmar, contra el set de campos canónicos que

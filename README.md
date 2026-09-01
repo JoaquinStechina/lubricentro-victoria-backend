@@ -30,11 +30,10 @@ persistencia con estado real.
 ## Setup
 
 ```bash
-cp .env.example .env   # completar DATABASE_URL, OPENROUTER_API_KEY, JWT_SECRET y SYSADMIN_* (ver Autenticación y roles)
+cp .env.example .env   # completar DATABASE_URL y OPENROUTER_API_KEY
 npm install
 npm run prisma:migrate   # crea las tablas en la base MySQL de DATABASE_URL
 npm run seed              # importa productos_todos.json / ofertas.json existentes
-npm run seed:sysadmin     # crea la primera cuenta SYSADMIN (lee SYSADMIN_EMAIL/PASSWORD/NOMBRE)
 npm run dev                # http://localhost:4000
 ```
 
@@ -62,22 +61,11 @@ nunca pasa por `dist/`):
 - `tsconfig.json` tiene `rootDir: "."`, así que `tsc` compila a `dist/src/*.js` y
   `dist/scripts/*.js`, no `dist/*.js` — el script `start` (`node dist/src/server.js`) y el `CMD`
   del `Dockerfile` reflejan eso.
-- El seed de producción no usa `npm run seed:sysadmin` (`tsx` es una devDependency, no está en
-  la imagen): se corre directo `node dist/scripts/seed-sysadmin.js`, el JS ya compilado.
-
-`COOKIE_SECURE` (ver `.env.example`) controla el flag `Secure` de la cookie de sesión,
-desacoplado de `NODE_ENV` — necesario porque sin dominio propio no hay TLS válido posible (Let's
-Encrypt no emite para IPs desnudas): en ese caso hay que servir por HTTP y dejarlo en `false`, o
-el browser descarta la cookie sin avisar y el login queda roto en silencio.
+- Los scripts de seed en producción no se corren con `npm run` (`tsx` es una devDependency, no
+  está en la imagen): se invocan directo, ej. `node dist/scripts/seed-from-json.js`.
 
 ## Modelo de datos
 
-- `Usuario` — cuentas internas del sistema (`email` único, `passwordHash` con
-  bcrypt, `rol`: `SYSADMIN` | `ADMINISTRADOR` | `EMPLEADO`, `activo`). No
-  tiene relación con `Proveedor`/`ProductoPrecio`/etc — es el modelo de auth,
-  aparte del pipeline de datos. `creadoPorId` referencia al `Usuario` que dio
-  de alta la cuenta (autoreferencia, nullable — el primer `SYSADMIN` lo crea
-  `scripts/seed-sysadmin.ts`, no tiene creador). Ver "Autenticación y roles".
 - `Proveedor` — un proveedor puede vender varias marcas.
   `mecanismoAutoDescarga` (`"abc_portal"` | `"dropbox_directo"` | `null`)
   determina si (y cómo) se auto-descargan sus listas de precios a diario —
@@ -160,55 +148,18 @@ el browser descarta la cookie sin avisar y el login queda roto en silencio.
   `porcentajeGananciaDefault`, que puede ser `null` igual en una carga de
   auto-descarga si la marca no tiene % configurado).
 
-## Autenticación y roles
+## Acceso
 
-Toda la API (salvo `/api/health` y `/api/auth/login`) requiere sesión. La
-sesión es un JWT firmado (`JWT_SECRET`, mismo valor que en
-`lubricentro-victoria-front/.env.local`) guardado en una cookie httpOnly
-(`session`) que emite `POST /api/auth/login`. El frontend la manda
-automáticamente porque `apiFetch` usa `credentials: "include"` — no hay
-tokens en `localStorage` ni headers manuales.
+La API no tiene autenticación: todos los endpoints son públicos para
+cualquiera que alcance el host. El control de acceso, si hace falta, va a
+nivel de red (allowlist de IPs, VPN o basic auth en el reverse proxy) — ver
+`../infra/README.md`.
 
-`src/middleware/auth.ts` expone dos middlewares:
-
-- `requireAuth` — verifica la cookie y adjunta `req.user` (`{sub, email,
-  nombre, rol}`). Montado globalmente en `server.ts` sobre todos los routers
-  salvo `authRouter`.
-- `requireRole(minRol)` — exige un rol mínimo con jerarquía acumulativa
-  `EMPLEADO < ADMINISTRADOR < SYSADMIN` (un `SYSADMIN` pasa cualquier chequeo
-  de rol). Se monta por router o por ruta puntual.
-
-Matriz de permisos actual:
-
-| Recurso | Rol mínimo |
-|---|---|
-| `GET /api/productos`, `GET /api/ofertas` (y sus `/export` y `/secciones`) | `EMPLEADO` (cualquier cuenta activa) |
-| `POST /api/ofertas/cerrar`, `POST /api/ofertas/reactivar` | `ADMINISTRADOR` |
-| `PATCH /api/productos/:id`, `POST /api/productos/editar-lote`, `POST /api/productos/eliminar`, `POST /api/productos/restaurar`, `POST /api/productos` (alta manual), `POST`/`DELETE /api/productos/:id/imagen` | `ADMINISTRADOR` |
-| `PATCH /api/ofertas/:id`, `POST /api/ofertas/editar-lote`, `POST /api/ofertas/eliminar`, `POST /api/ofertas/restaurar`, `POST /api/ofertas` (alta manual), `POST`/`DELETE /api/ofertas/:id/imagen` | `ADMINISTRADOR` |
-| `?incluirEliminados=true` en los `GET` (vista papelera) | `ADMINISTRADOR` (un `EMPLEADO` que mande el flag lo tiene ignorado) |
-| `/api/uploads/*`, `/api/stats`, `/api/proveedores`, `/api/auto-descargas/*` (todo) | `ADMINISTRADOR` |
-| `/api/usuarios/*` (todo) | `SYSADMIN` |
-
-El primer `SYSADMIN` no se crea desde la API — no hay forma de que exista
-un usuario que autorice esa primera creación. Se crea con
-`npm run seed:sysadmin` (lee `SYSADMIN_EMAIL`/`SYSADMIN_PASSWORD`/
-`SYSADMIN_NOMBRE` del entorno). Desde ahí, un `SYSADMIN` da de alta cuentas
-`ADMINISTRADOR`/`EMPLEADO` vía `POST /api/usuarios` (no se puede crear otro
-`SYSADMIN` por ese endpoint).
+`FRONTEND_URL` sigue existiendo solo para el header CORS.
 
 ## Endpoints
 
 - `GET /api/health`
-- `POST /api/auth/login` — body `{email, password}`. Devuelve el usuario y
-  setea la cookie `session` (httpOnly, 7 días).
-- `POST /api/auth/logout` — limpia la cookie.
-- `GET /api/auth/me` — usuario de la sesión actual (requiere estar logueado).
-- `GET /api/usuarios` / `POST /api/usuarios` / `PATCH /api/usuarios/:id` —
-  listar, crear (`{email, nombre, password, rol}`, `rol` restringido a
-  `ADMINISTRADOR`/`EMPLEADO`) y editar (activar/desactivar, cambiar rol o
-  nombre, resetear password) cuentas. Todo `SYSADMIN`-only, ver
-  "Autenticación y roles".
 - `POST /api/uploads` — multipart, campo `file` (xlsx/xls/pdf/png/jpg),
   opcionalmente `proveedor` (nombre), `tipoDatos` (`"catalogo"` default |
   `"oferta"`) y, solo si `tipoDatos` es `"oferta"`, `sinFechaLimite`
@@ -265,7 +216,7 @@ un usuario que autorice esa primera creación. Se crea con
   duplicado por un typo en el nombre).
 - `GET /api/auto-descargas` / `POST /api/auto-descargas` / `PATCH
   /api/auto-descargas/:id` / `DELETE /api/auto-descargas/:id` — CRUD de
-  `AutoDescargaMarca` (`ADMINISTRADOR`+), pantalla `/cargas/auto-descargas`
+  `AutoDescargaMarca`, pantalla `/cargas/auto-descargas`
   del frontend. `POST` hace `upsert` del proveedor por nombre (mismo criterio
   que `POST /api/uploads`) para no obligar a crearlo antes a mano. Ver
   "Automatización" más abajo para el detalle de qué hace cada fila.
@@ -320,17 +271,17 @@ un usuario que autorice esa primera creación. Se crea con
   streaming si crece. El export de ofertas agrega la columna calculada
   Estado (Activa/Cerrada/Vencida) y muestra "Hasta agotar stock" donde
   `fechaHasta` es null.
-- `PATCH /api/productos/:id` — edita una fila del catálogo (`ADMINISTRADOR`).
+- `PATCH /api/productos/:id` — edita una fila del catálogo.
   Body: subconjunto de `{marca, skuProveedor, skuInterno, descripcion,
   seccion, precioNeto, precioConIva, alicuotaIva, moneda, unidad,
   fechaVigencia}`. 404 si no existe o ya está eliminada.
-- `POST /api/productos/editar-lote` — aplica un mismo valor a varias filas
-  (`ADMINISTRADOR`). Body `{"ids": number[], "field": string, "value":
+- `POST /api/productos/editar-lote` — aplica un mismo valor a varias filas.
+  Body `{"ids": number[], "field": string, "value":
   any}`, `field` restringido a `{seccion, precioNeto, precioConIva,
   alicuotaIva, moneda, unidad, fechaVigencia}` (no incluye campos
   identificadores como marca/sku/descripción, para no corromper datos al
   aplicar en lote). Responde `{"actualizados": <count>}`.
-- `POST /api/productos/eliminar` — borrado lógico (`ADMINISTRADOR`). Body
+- `POST /api/productos/eliminar` — borrado lógico. Body
   `{"ids": number[]}`. Marca `eliminado: true` (la fila sigue en la base,
   solo deja de aparecer en `GET`). Responde `{"eliminados": <count>}`.
 - `GET /api/productos/:id/historial` — historial de precios del SKU de esa
@@ -345,11 +296,10 @@ un usuario que autorice esa primera creación. Se crea con
   mezcla tramos: el precio baja a propósito con más cantidad, compararlos
   daría saltos falsos — mismo criterio que las advertencias).
 - `POST /api/productos/restaurar` / `POST /api/ofertas/restaurar` — espejo
-  de `/eliminar` (`ADMINISTRADOR`): mismo body, marca `eliminado: false` y
+  de `/eliminar`: mismo body, marca `eliminado: false` y
   responde `{"restaurados": <count>}`. Es la salida de la "papelera": los
-  `GET` de ambos recursos aceptan `?incluirEliminados=true` (solo
-  `ADMINISTRADOR`+, chequeado inline porque los `GET` no tienen
-  `requireRole`) que cambia la vista a SOLO las filas eliminadas — sin
+  `GET` de ambos recursos aceptan `?incluirEliminados=true`, que cambia la
+  vista a SOLO las filas eliminadas — sin
   mezclar con las vivas, sin condición de `vigente`/`activa`, y en
   productos sin el `distinct` (una eliminada que comparte
   proveedor+marca+SKU con otra fila quedaría oculta).
@@ -383,7 +333,7 @@ un usuario que autorice esa primera creación. Se crea con
   combinación (todos los tramos de `desde_cantidad` de ese SKU dentro de esa
   oferta) — "se acabó el stock" es un hecho del producto, no de un tramo de
   cantidad puntual.
-- `PATCH /api/ofertas/:id` — edita una fila de oferta (`ADMINISTRADOR`).
+- `PATCH /api/ofertas/:id` — edita una fila de oferta.
   Body: subconjunto de `{marca, numeroOferta, skuProveedor, descripcion,
   desdeCantidad, descuentoPct, precioUnitario, moneda, fechaOferta,
   horaOferta, fechaHasta}`. No toca `activa` (eso es solo `/cerrar` y
@@ -394,7 +344,7 @@ un usuario que autorice esa primera creación. Se crea con
 - `POST /api/ofertas/eliminar` — borrado lógico, igual shape que el de
   productos. Independiente de `activa`/`cerrar`/`reactivar`.
 - `POST /api/productos` / `POST /api/ofertas` — alta manual de una fila
-  suelta (`ADMINISTRADOR`), en paralelo al pipeline de carga masiva de
+  suelta, en paralelo al pipeline de carga masiva de
   archivos (`/api/uploads`). Body JSON: `{proveedorId}` (proveedor existente)
   o `{proveedorNombre}` (crea el proveedor si no existe, mismo `upsert` que
   usa `POST /api/uploads`) más el resto de los campos editables de cada
@@ -408,7 +358,7 @@ un usuario que autorice esa primera creación. Se crea con
   mecanismo que al confirmar una carga). Ambos devuelven la fila creada con
   `cargaId: null` y status 201.
 - `POST /api/productos/:id/imagen` / `POST /api/ofertas/:id/imagen` — sube o
-  reemplaza la foto de una fila (`ADMINISTRADOR`, `multipart/form-data` con
+  reemplaza la foto de una fila (`multipart/form-data` con
   el archivo en el campo `imagen`). Acepta JPG/PNG/WEBP hasta 5MB (400 si no
   matchea extensión+mimetype o excede el límite). Si la fila ya tenía una
   imagen, borra el archivo viejo del disco antes de guardar el nuevo (no deja

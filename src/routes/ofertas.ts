@@ -1,7 +1,6 @@
 import { Router } from "express";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
-import { requireRole } from "../middleware/auth.js";
 import { enviarExport, type FilaExport } from "./exportar.js";
 import { imagenUploadSingle, imagenPublicUrl, eliminarArchivoImagen } from "../lib/imagenes.js";
 import { roundTo2 } from "../lib/numeros.js";
@@ -48,20 +47,15 @@ const OFERTAS_SORTABLE: Record<
 };
 
 // Papelera: con ?incluirEliminados=true la tabla pasa a mostrar SOLO las
-// filas eliminadas, únicamente para ADMINISTRADOR+ (paralelo a
-// productos.ts#vistaPapelera).
-export function vistaPapelera(req: {
-  query: Record<string, unknown>;
-  user?: { rol: string };
-}): boolean {
-  return req.query.incluirEliminados === "true" && !!req.user && req.user.rol !== "EMPLEADO";
+// filas eliminadas (paralelo a productos.ts#vistaPapelera).
+export function vistaPapelera(req: { query: Record<string, unknown> }): boolean {
+  return req.query.incluirEliminados === "true";
 }
 
 // Construye el where de GET / a partir de los query params — extraído para
 // reusarlo en /export sin duplicar la lógica de filtros.
 export function buildOfertasWhere(req: {
   query: Record<string, unknown>;
-  user?: { rol: string };
 }): Prisma.OfertaWhereInput {
   const proveedorId = req.query.proveedorId ? Number(req.query.proveedorId) : undefined;
   const incluirCerradas = req.query.incluirCerradas === "true";
@@ -182,7 +176,7 @@ ofertasRouter.get("/", async (req, res) => {
 });
 
 // Exporta el resultado filtrado completo (mismos filtros y orden que GET /)
-// como CSV o XLSX. Mismo rol que la lectura (EMPLEADO).
+// como CSV o XLSX.
 ofertasRouter.get("/export", async (req, res) => {
   const ofertas = await prisma.oferta.findMany({
     where: buildOfertasWhere(req),
@@ -290,7 +284,7 @@ function parseCerrarBody(body: unknown): { proveedorId: number; numeroOferta: nu
 // Cierran (o reabren) TODOS los tramos (desde_cantidad distintos) de un
 // mismo sku_proveedor dentro de una misma oferta — "se acabó el stock" es
 // un hecho del producto, no de un tramo puntual de cantidad/descuento.
-ofertasRouter.post("/cerrar", requireRole("ADMINISTRADOR"), async (req, res) => {
+ofertasRouter.post("/cerrar", async (req, res) => {
   const parsed = parseCerrarBody(req.body);
   if (!parsed) {
     res.status(400).json({ error: "Body inválido: se esperaba {proveedorId, numeroOferta, skuProveedor}." });
@@ -307,7 +301,7 @@ ofertasRouter.post("/cerrar", requireRole("ADMINISTRADOR"), async (req, res) => 
   res.json({ actualizadas: count });
 });
 
-ofertasRouter.post("/reactivar", requireRole("ADMINISTRADOR"), async (req, res) => {
+ofertasRouter.post("/reactivar", async (req, res) => {
   const parsed = parseCerrarBody(req.body);
   if (!parsed) {
     res.status(400).json({ error: "Body inválido: se esperaba {proveedorId, numeroOferta, skuProveedor}." });
@@ -425,7 +419,7 @@ async function resolverProveedor(body: {
 // normalizeOfertaRow aplica a filas de archivo con esos campos vacíos, para
 // que una oferta cargada a mano y una extraída de un Excel tengan la misma
 // semántica.
-ofertasRouter.post("/", requireRole("ADMINISTRADOR"), async (req, res) => {
+ofertasRouter.post("/", async (req, res) => {
   const body = (req.body ?? {}) as Record<string, unknown>;
   const proveedorId = await resolverProveedor(body);
   if (!proveedorId) {
@@ -498,7 +492,7 @@ ofertasRouter.post("/", requireRole("ADMINISTRADOR"), async (req, res) => {
   }
 });
 
-ofertasRouter.post("/editar-lote", requireRole("ADMINISTRADOR"), async (req, res) => {
+ofertasRouter.post("/editar-lote", async (req, res) => {
   const b = (req.body ?? {}) as { ids?: unknown; field?: unknown; value?: unknown };
   const ids = Array.isArray(b.ids) ? b.ids.filter((v) => Number.isFinite(Number(v))).map(Number) : [];
   const field = typeof b.field === "string" ? b.field : "";
@@ -520,7 +514,7 @@ ofertasRouter.post("/editar-lote", requireRole("ADMINISTRADOR"), async (req, res
   res.json({ actualizados: count });
 });
 
-ofertasRouter.post("/eliminar", requireRole("ADMINISTRADOR"), async (req, res) => {
+ofertasRouter.post("/eliminar", async (req, res) => {
   const b = (req.body ?? {}) as { ids?: unknown };
   const ids = Array.isArray(b.ids) ? b.ids.filter((v) => Number.isFinite(Number(v))).map(Number) : [];
   if (ids.length === 0) {
@@ -535,7 +529,7 @@ ofertasRouter.post("/eliminar", requireRole("ADMINISTRADOR"), async (req, res) =
 });
 
 // Espejo de /eliminar: saca filas de la papelera (ver vistaPapelera).
-ofertasRouter.post("/restaurar", requireRole("ADMINISTRADOR"), async (req, res) => {
+ofertasRouter.post("/restaurar", async (req, res) => {
   const b = (req.body ?? {}) as { ids?: unknown };
   const ids = Array.isArray(b.ids) ? b.ids.filter((v) => Number.isFinite(Number(v))).map(Number) : [];
   if (ids.length === 0) {
@@ -549,7 +543,7 @@ ofertasRouter.post("/restaurar", requireRole("ADMINISTRADOR"), async (req, res) 
   res.json({ restaurados: count });
 });
 
-ofertasRouter.patch("/:id", requireRole("ADMINISTRADOR"), async (req, res) => {
+ofertasRouter.patch("/:id", async (req, res) => {
   const id = Number(req.params.id);
   const objetivo = await prisma.oferta.findUnique({ where: { id } });
   if (!objetivo || objetivo.eliminado) {
@@ -574,7 +568,6 @@ ofertasRouter.patch("/:id", requireRole("ADMINISTRADOR"), async (req, res) => {
 // imagenUrl es gestionado por el servidor, no tipeado por el usuario).
 ofertasRouter.post(
   "/:id/imagen",
-  requireRole("ADMINISTRADOR"),
   imagenUploadSingle,
   async (req, res) => {
     if (!req.file) {
@@ -601,7 +594,7 @@ ofertasRouter.post(
   }
 );
 
-ofertasRouter.delete("/:id/imagen", requireRole("ADMINISTRADOR"), async (req, res) => {
+ofertasRouter.delete("/:id/imagen", async (req, res) => {
   try {
     const id = Number(req.params.id);
     const objetivo = await prisma.oferta.findUnique({ where: { id } });

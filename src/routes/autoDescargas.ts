@@ -1,13 +1,10 @@
 import { Router } from "express";
 import { Prisma } from "@prisma/client";
 import { prisma } from "../db.js";
-import { requireRole } from "../middleware/auth.js";
 import { correrAutoDescargasAbc } from "../automation/abcAutoDescarga.js";
 import { correrAutoDescargasDirectas } from "../automation/dropboxAutoDescarga.js";
 
 export const autoDescargasRouter = Router();
-
-autoDescargasRouter.use(requireRole("ADMINISTRADOR"));
 
 autoDescargasRouter.get("/", async (_req, res) => {
   const filas = await prisma.autoDescargaMarca.findMany({

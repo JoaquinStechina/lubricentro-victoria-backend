@@ -1,10 +1,7 @@
 import { Router } from "express";
 import { prisma } from "../db.js";
-import { requireRole } from "../middleware/auth.js";
 
 export const proveedoresRouter = Router();
-
-proveedoresRouter.use(requireRole("ADMINISTRADOR"));
 
 // Lista de proveedores existentes, para que el frontend pueda ofrecer un
 // autocomplete al subir un archivo en vez de un texto libre a ciegas (un
