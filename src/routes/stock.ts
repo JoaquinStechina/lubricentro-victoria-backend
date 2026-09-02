@@ -73,22 +73,26 @@ export function buildStockOrderBy(req: {
   return [sortable(order), { createdAt: "desc" }];
 }
 
+// buildStockWhere + el filtro ?soloBajoMinimo=true. Va aparte y es async
+// porque Prisma no sabe comparar dos columnas entre sí (cantidad <= minimo),
+// así que hace falta un raw que traiga los ids y se intersecte con el resto
+// del where. Lo comparten GET / y GET /export: si el export no lo aplicara,
+// exportar con el switch activado bajaría filas que la tabla no muestra.
+export async function buildStockWhereCompleto(req: {
+  query: Record<string, unknown>;
+}): Promise<Prisma.ArticuloStockWhereInput> {
+  const where = buildStockWhere(req);
+  if (req.query.soloBajoMinimo !== "true") return where;
+  const filas = await prisma.$queryRaw<{ id: number }[]>`
+    SELECT id FROM articulos_stock WHERE minimo IS NOT NULL AND cantidad <= minimo
+  `;
+  return { AND: [where, { id: { in: filas.map((f) => f.id) } }] };
+}
+
 stockRouter.get("/", async (req, res) => {
   const page = Math.max(1, Number(req.query.page) || 1);
   const pageSize = Math.min(500, Math.max(1, Number(req.query.pageSize) || 50));
-  const where = buildStockWhere(req);
-
-  // ?soloBajoMinimo=true: artículos con mínimo definido que están en o por
-  // debajo de él. Prisma no compara dos columnas entre sí, así que se resuelve
-  // con un raw que devuelve los ids y se intersecta con el resto del where.
-  const soloBajoMinimo = req.query.soloBajoMinimo === "true";
-  let whereFinal = where;
-  if (soloBajoMinimo) {
-    const filas = await prisma.$queryRaw<{ id: number }[]>`
-      SELECT id FROM articulos_stock WHERE minimo IS NOT NULL AND cantidad <= minimo
-    `;
-    whereFinal = { AND: [where, { id: { in: filas.map((f) => f.id) } }] };
-  }
+  const whereFinal = await buildStockWhereCompleto(req);
 
   const [total, items] = await Promise.all([
     prisma.articuloStock.count({ where: whereFinal }),
@@ -117,7 +121,7 @@ stockRouter.get("/categorias", async (_req, res) => {
 
 stockRouter.get("/export", async (req, res) => {
   const articulos = await prisma.articuloStock.findMany({
-    where: buildStockWhere(req),
+    where: await buildStockWhereCompleto(req),
     orderBy: buildStockOrderBy(req),
   });
 
