@@ -1,0 +1,57 @@
+name: CI
+
+on:
+  # En master no corre por push: ahí lo invoca deploy.yml como paso previo al
+  # deploy (workflow_call), así no se duplica el trabajo.
+  push:
+    branches-ignore: [master]
+  pull_request:
+  workflow_call:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      # Los tests de integración corren contra un MySQL real, no contra un
+      # Prisma mockeado: en este backend buena parte de la lógica vive en el
+      # where de la query (filtros de eliminado/vigente, el matcheo por código
+      # normalizado de reposición), y un mock no verificaría nada de eso.
+      mysql:
+        image: mysql:8.0
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: lubricentro_victoria_test
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -uroot -proot"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+
+    env:
+      DATABASE_URL: mysql://root:root@127.0.0.1:3306/lubricentro_victoria_test
+      TEST_DATABASE_URL: mysql://root:root@127.0.0.1:3306/lubricentro_victoria_test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      - name: Generar cliente de Prisma
+        run: npx prisma generate
+
+      - name: Chequeo de tipos
+        run: npx tsc --noEmit
+
+      - name: Migrar la base de test
+        run: npx prisma migrate deploy
+
+      - name: Tests
+        run: npm test

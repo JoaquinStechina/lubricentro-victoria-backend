@@ -5,7 +5,12 @@ on:
     branches: [master]
 
 jobs:
+  # El deploy no arranca si los tests o el chequeo de tipos fallan.
+  test:
+    uses: ./.github/workflows/ci.yml
+
   deploy:
+    needs: test
     runs-on: ubuntu-latest
     steps:
       - name: Deploy to VPS
