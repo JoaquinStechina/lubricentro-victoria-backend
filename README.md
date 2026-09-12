@@ -45,9 +45,56 @@ archivos, parsear xlsx/xls, aplicar un mapeo ya aprobado). Lo que sí la
 necesita (extraer pdf/png, sugerir mapeo de un proveedor nuevo) falla con un
 error claro (`Falta OPENROUTER_API_KEY...`) en vez de romper el proceso.
 
+## Tests
+
 ```bash
-npm test   # corre src/**/*.test.ts (node:test, sin dependencias extra)
+npm run test:db:preparar   # una sola vez: crea y migra la base de test
+npm test                   # unitarios + integración
 ```
+
+Dos suites, ambas con `node:test` y sin dependencias extra:
+
+| Script | Archivos | Qué cubre |
+|---|---|---|
+| `npm run test:unit` | `src/**/*.test.ts` | Funciones puras: mapeo de columnas, visión, helpers de automation y de stock. No tocan la base. |
+| `npm run test:db` | `src/test/*.itest.ts` | La app real levantada en un puerto efímero, contra un MySQL real. |
+
+Los de integración van por HTTP contra `app` (`src/app.ts`), no llamando a los
+handlers de Express a mano: lo que se verifica es el contrato que consume el
+frontend — status, JSON y todo el middleware en el medio. Y corren contra una
+base de verdad, no contra un Prisma mockeado, porque en este backend buena
+parte de la lógica vive en el `where` de la query (filtros de
+`eliminado`/`vigente`, el matcheo por código normalizado de reposición): un
+mock no verificaría nada de eso.
+
+### La base de test
+
+`TEST_DATABASE_URL` en `.env`, **distinta** de `DATABASE_URL`: los tests
+truncan todas las tablas antes de cada caso. Hay dos cerrojos para que eso no
+pueda pasarle a la base de desarrollo:
+
+1. Si el nombre de la base no contiene `test`, la suite se saltea con un aviso
+   visible en vez de correr.
+2. `limpiarBase()` vuelve a chequear la URL efectiva justo antes de truncar y
+   lanza si no cumple.
+
+Sin `TEST_DATABASE_URL`, `npm run test:db` se saltea entero (con aviso) y
+`npm run test:unit` corre igual.
+
+### Cómo agregar tests
+
+- **Lógica sin I/O** → sacala a un módulo aparte (`lib/`, `*Helpers.ts`) y
+  testeala en un `.test.ts`. Es la convención que ya siguen
+  `abcAutoDescarga.ts` / `abcAutoDescargaHelpers.ts`.
+- **Un endpoint nuevo** → `.itest.ts` en `src/test/`, usando `levantarApi()` y
+  las factories de `src/test/factories.ts`. Poné los defaults nuevos en la
+  factory, no en cada test: el día que el schema sume una columna obligatoria
+  se arregla en un solo lugar.
+- **Un endpoint de listado nuevo** → agregá un `it()` en
+  `contratoListado.itest.ts` con su seed y llamá a
+  `verificarContratoDeListado(api, ruta)`. Hereda forma de respuesta, tope de
+  500 filas, no-solapamiento entre páginas y página fuera de rango sin
+  escribir un solo assert.
 
 ## Despliegue
 
