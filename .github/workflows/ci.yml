@@ -38,7 +38,10 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          # Misma mayor que las imagenes de produccion (node:20-slim en
+          # backend/Dockerfile): si el gate corriera en otra, podria pasar
+          # en verde algo que despues falla al construir la imagen.
+          node-version: "20"
           cache: npm
           cache-dependency-path: package-lock.json
 
