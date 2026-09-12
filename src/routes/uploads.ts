@@ -153,20 +153,29 @@ uploadsRouter.post("/", upload.single("file"), async (req, res) => {
 // sort_buffer_size de MySQL ("Out of sort memory"). El detalle completo
 // (incluido filasExtraidas) se sigue sirviendo aparte en GET /:id, que es
 // lo único que la pantalla de revisión necesita.
-uploadsRouter.get("/", async (_req, res) => {
-  const cargas = await prisma.carga.findMany({
-    select: {
-      id: true,
-      nombreArchivo: true,
-      tipoArchivo: true,
-      tipoDatos: true,
-      estado: true,
-      createdAt: true,
-      proveedor: { select: { id: true, nombre: true } },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-  res.json(cargas);
+uploadsRouter.get("/", async (req, res) => {
+  const page = Math.max(1, Number(req.query.page) || 1);
+  const pageSize = Math.min(500, Math.max(1, Number(req.query.pageSize) || 50));
+
+  const [total, items] = await Promise.all([
+    prisma.carga.count(),
+    prisma.carga.findMany({
+      select: {
+        id: true,
+        nombreArchivo: true,
+        tipoArchivo: true,
+        tipoDatos: true,
+        estado: true,
+        createdAt: true,
+        proveedor: { select: { id: true, nombre: true } },
+      },
+      orderBy: { createdAt: "desc" },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+  ]);
+
+  res.json({ items, total, page, pageSize, totalPages: Math.max(1, Math.ceil(total / pageSize)) });
 });
 
 uploadsRouter.get("/:id", async (req, res) => {
